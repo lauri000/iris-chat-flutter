@@ -1263,6 +1263,46 @@ void main() {
       });
 
       test(
+        'clears typing when stop rumor expiration equals sender created_at in the future',
+        () async {
+          const peerPubkey =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+          final session = ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex: peerPubkey,
+            createdAt: DateTime.now(),
+          );
+          final futureSeconds =
+              DateTime.now().millisecondsSinceEpoch ~/ 1000 + 120;
+
+          when(() => mockSessionManagerService.ownerPubkeyHex).thenReturn(null);
+          when(
+            () => mockMessageDatasource.messageExists(any()),
+          ).thenAnswer((_) async => false);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(peerPubkey),
+          ).thenAnswer((_) async => session);
+
+          const typingStartRumorJson =
+              '{"id":"typing-start-future","pubkey":"$peerPubkey","created_at":1700000001,"kind":25,"content":"typing","tags":[]}';
+          final typingStopRumorJson =
+              '{"id":"typing-stop-future","pubkey":"$peerPubkey","created_at":$futureSeconds,"kind":25,"content":"typing","tags":[["expiration","$futureSeconds"]]}';
+
+          await notifier.receiveDecryptedMessage(
+            peerPubkey,
+            typingStartRumorJson,
+          );
+          expect(notifier.state.typingStates[session.id] ?? false, isTrue);
+
+          await notifier.receiveDecryptedMessage(
+            peerPubkey,
+            typingStopRumorJson,
+          );
+          expect(notifier.state.typingStates[session.id] ?? false, isFalse);
+        },
+      );
+
+      test(
         'backfills outgoing eventId when receiving self-echo by rumor id',
         () async {
           const myPubkey =

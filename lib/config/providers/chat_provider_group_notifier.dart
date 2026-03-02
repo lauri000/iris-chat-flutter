@@ -1019,17 +1019,18 @@ class GroupNotifier extends StateNotifier<GroupState> {
     final myPubkeyHex = _myPubkeyHex();
     if (myPubkeyHex != null && rumor.pubkey == myPubkeyHex) return;
 
-    final nowSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final expiresAtSeconds = getExpirationTimestampSeconds(rumor.tags);
-    if (expiresAtSeconds != null && expiresAtSeconds <= nowSeconds) {
+    if (isTypingStopRumor(rumor, expiresAtSeconds: expiresAtSeconds)) {
       _clearGroupTyping(groupId);
       return;
     }
 
     final typingTimestampMs = rumorTimestamp(rumor).millisecondsSinceEpoch;
     final lastMessageTimestampMs = _lastGroupMessageAtMs[groupId];
-    if (lastMessageTimestampMs != null &&
-        typingTimestampMs <= lastMessageTimestampMs) {
+    if (isTypingTimestampStale(
+      typingTimestampMs: typingTimestampMs,
+      lastMessageTimestampMs: lastMessageTimestampMs,
+    )) {
       return;
     }
 

@@ -95,4 +95,36 @@ void main() {
     await notifier.handleIncomingGroupRumorJson(messageRumorJson);
     expect(notifier.state.typingStates[groupId] ?? false, isFalse);
   });
+
+  test(
+    'group typing stop clears indicator when expiration equals future created_at',
+    () async {
+      const groupId = 'group-1';
+      final futureSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000 + 120;
+
+      notifier.state = notifier.state.copyWith(
+        groups: [
+          ChatGroup(
+            id: groupId,
+            name: 'Group 1',
+            members: [myPubkey, peerPubkey],
+            admins: [myPubkey],
+            createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+            accepted: true,
+          ),
+        ],
+      );
+
+      const typingRumorJson =
+          '{"id":"typing-2","pubkey":"$peerPubkey","created_at":1700000001,"kind":25,"content":"typing","tags":[["l","$groupId"]]}';
+      final stopRumorJson =
+          '{"id":"typing-stop-2","pubkey":"$peerPubkey","created_at":$futureSeconds,"kind":25,"content":"typing","tags":[["l","$groupId"],["expiration","$futureSeconds"]]}';
+
+      await notifier.handleIncomingGroupRumorJson(typingRumorJson);
+      expect(notifier.state.typingStates[groupId] ?? false, isTrue);
+
+      await notifier.handleIncomingGroupRumorJson(stopRumorJson);
+      expect(notifier.state.typingStates[groupId] ?? false, isFalse);
+    },
+  );
 }

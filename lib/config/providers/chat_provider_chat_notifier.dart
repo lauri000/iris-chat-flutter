@@ -464,14 +464,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
           // Ignore self typing events (multi-device sync).
           return null;
         }
-        final normalizedContent = rumor.content.trim().toLowerCase();
-        final nowSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
         final expiresAtSeconds = getExpirationTimestampSeconds(rumor.tags);
-        final isStopEvent =
-            (expiresAtSeconds != null && expiresAtSeconds <= nowSeconds) ||
-            normalizedContent == 'false' ||
-            normalizedContent == 'stop' ||
-            normalizedContent == 'typing:false';
+        final isStopEvent = isTypingStopRumor(
+          rumor,
+          expiresAtSeconds: expiresAtSeconds,
+        );
 
         if (isStopEvent) {
           _clearRemoteTyping(sessionId, recipientPubkeyHex: peerPubkeyHex);
@@ -746,8 +743,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final applicableKeys = <String>{};
     for (final key in keys) {
       final lastMessageTimestampMs = _lastRemoteMessageAtMs[key];
-      if (lastMessageTimestampMs != null &&
-          resolvedTypingTimestampMs <= lastMessageTimestampMs) {
+      if (isTypingTimestampStale(
+        typingTimestampMs: resolvedTypingTimestampMs,
+        lastMessageTimestampMs: lastMessageTimestampMs,
+      )) {
         continue;
       }
       applicableKeys.add(key);

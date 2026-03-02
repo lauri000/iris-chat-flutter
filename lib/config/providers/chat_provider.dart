@@ -13,6 +13,7 @@ import '../../core/services/profile_service.dart';
 import '../../core/services/session_manager_service.dart';
 import '../../core/utils/hashtree_attachments.dart';
 import '../../core/utils/nostr_rumor.dart';
+import '../../core/utils/typing_rumor.dart';
 import '../../features/chat/data/datasources/group_local_datasource.dart';
 import '../../features/chat/data/datasources/group_message_local_datasource.dart';
 import '../../features/chat/data/datasources/message_local_datasource.dart';
