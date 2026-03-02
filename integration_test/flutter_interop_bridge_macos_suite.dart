@@ -118,6 +118,45 @@ Future<void> _emitEvent(File eventsFile, Map<String, dynamic> event) async {
   stdout.writeln('IRIS_FLUTTER_INTEROP_EVENT $line');
 }
 
+class _MessageMatch {
+  const _MessageMatch({
+    required this.sessionId,
+    required this.messageId,
+    required this.text,
+    this.rumorId,
+    this.eventId,
+  });
+
+  final String sessionId;
+  final String messageId;
+  final String text;
+  final String? rumorId;
+  final String? eventId;
+}
+
+_MessageMatch? _findMessageByText(
+  ProviderContainer container, {
+  required String text,
+  required bool incomingOnly,
+}) {
+  final messagesBySession = container.read(chatStateProvider).messages;
+  for (final entry in messagesBySession.entries) {
+    final sessionId = entry.key;
+    for (final message in entry.value) {
+      if (message.text != text) continue;
+      if (incomingOnly && !message.isIncoming) continue;
+      return _MessageMatch(
+        sessionId: sessionId,
+        messageId: message.id,
+        text: message.text,
+        rumorId: message.rumorId,
+        eventId: message.eventId,
+      );
+    }
+  }
+  return null;
+}
+
 Future<String?> _findSessionIdByRecipient(
   ProviderContainer container,
   String recipientPubkeyHex,
@@ -154,16 +193,95 @@ Future<bool> _waitForMessageText(
   final end = DateTime.now().add(timeout);
 
   while (DateTime.now().isBefore(end)) {
-    final messagesBySession = container.read(chatStateProvider).messages;
-
-    for (final messages in messagesBySession.values) {
-      for (final message in messages) {
-        if (message.text != text) continue;
-        if (incomingOnly && !message.isIncoming) continue;
-        return true;
-      }
+    final match = _findMessageByText(
+      container,
+      text: text,
+      incomingOnly: incomingOnly,
+    );
+    if (match != null) {
+      return true;
     }
 
+    await Future.delayed(const Duration(milliseconds: 80));
+  }
+
+  return false;
+}
+
+Future<_MessageMatch?> _waitForMessageMatch(
+  ProviderContainer container, {
+  required String text,
+  required Duration timeout,
+  required bool incomingOnly,
+}) async {
+  final end = DateTime.now().add(timeout);
+
+  while (DateTime.now().isBefore(end)) {
+    final match = _findMessageByText(
+      container,
+      text: text,
+      incomingOnly: incomingOnly,
+    );
+    if (match != null) return match;
+    await Future.delayed(const Duration(milliseconds: 80));
+  }
+
+  return null;
+}
+
+Future<Set<String>> _typingKeysForSession(
+  ProviderContainer container,
+  String sessionId,
+) async {
+  final normalizedSessionId = sessionId.toLowerCase();
+  final keys = <String>{normalizedSessionId};
+
+  String? recipientPubkeyHex;
+  final inMemory = container.read(sessionStateProvider).sessions;
+  for (final s in inMemory) {
+    if (s.id.toLowerCase() == normalizedSessionId) {
+      recipientPubkeyHex = s.recipientPubkeyHex;
+      break;
+    }
+  }
+
+  if (recipientPubkeyHex == null || recipientPubkeyHex.isEmpty) {
+    final byId = await container
+        .read(sessionDatasourceProvider)
+        .getSession(sessionId);
+    recipientPubkeyHex = byId?.recipientPubkeyHex;
+  }
+
+  if (recipientPubkeyHex == null || recipientPubkeyHex.isEmpty) {
+    final byRecipient = await container
+        .read(sessionDatasourceProvider)
+        .getSessionByRecipient(sessionId);
+    recipientPubkeyHex = byRecipient?.recipientPubkeyHex;
+  }
+
+  final recipient = recipientPubkeyHex?.toLowerCase().trim();
+  if (recipient != null && recipient.isNotEmpty) {
+    keys.add(recipient);
+  }
+
+  return keys;
+}
+
+Future<bool> _waitForTypingState(
+  ProviderContainer container, {
+  required String sessionId,
+  required bool expectedTyping,
+  required Duration timeout,
+}) async {
+  final end = DateTime.now().add(timeout);
+
+  while (DateTime.now().isBefore(end)) {
+    final keys = await _typingKeysForSession(container, sessionId);
+    final typing = container.read(chatStateProvider).typingStates;
+    final isTyping = keys.any((key) => typing[key] ?? false);
+    if (isTyping == expectedTyping) {
+      return true;
+    }
     await Future.delayed(const Duration(milliseconds: 80));
   }
 
@@ -337,6 +455,28 @@ Future<void> _handleCommand({
         await ok({});
         return;
 
+      case 'send_typing':
+        final sessionId = payload['sessionId']?.toString() ?? '';
+        if (sessionId.isEmpty) {
+          throw ArgumentError('send_typing requires sessionId');
+        }
+        await container
+            .read(chatStateProvider.notifier)
+            .notifyTyping(sessionId);
+        await ok({});
+        return;
+
+      case 'send_typing_stopped':
+        final sessionId = payload['sessionId']?.toString() ?? '';
+        if (sessionId.isEmpty) {
+          throw ArgumentError('send_typing_stopped requires sessionId');
+        }
+        await container
+            .read(chatStateProvider.notifier)
+            .notifyTypingStopped(sessionId);
+        await ok({});
+        return;
+
       case 'wait_for_message':
         final text = payload['text']?.toString() ?? '';
         if (text.isEmpty) {
@@ -362,6 +502,86 @@ Future<void> _handleCommand({
         }
 
         await ok({'text': text});
+        return;
+
+      case 'wait_for_message_meta':
+        final text = payload['text']?.toString() ?? '';
+        if (text.isEmpty) {
+          throw ArgumentError('wait_for_message_meta requires text');
+        }
+
+        final timeoutMsRaw = payload['timeoutMs'];
+        final timeoutMs = timeoutMsRaw is num ? timeoutMsRaw.toInt() : 30000;
+        final incomingOnly = payload['incomingOnly'] == true;
+
+        final match = await _waitForMessageMatch(
+          container,
+          text: text,
+          timeout: Duration(milliseconds: timeoutMs),
+          incomingOnly: incomingOnly,
+        );
+
+        if (match == null) {
+          throw TimeoutException(
+            'Timed out waiting for message text',
+            Duration(milliseconds: timeoutMs),
+          );
+        }
+
+        await ok({
+          'sessionId': match.sessionId,
+          'messageId': match.messageId,
+          'text': match.text,
+          'rumorId': match.rumorId,
+          'eventId': match.eventId,
+        });
+        return;
+
+      case 'wait_for_typing':
+        final sessionId = payload['sessionId']?.toString() ?? '';
+        if (sessionId.isEmpty) {
+          throw ArgumentError('wait_for_typing requires sessionId');
+        }
+        final timeoutMsRaw = payload['timeoutMs'];
+        final timeoutMs = timeoutMsRaw is num ? timeoutMsRaw.toInt() : 30000;
+        final expectedTyping = payload['isTyping'] != false;
+
+        final reached = await _waitForTypingState(
+          container,
+          sessionId: sessionId,
+          expectedTyping: expectedTyping,
+          timeout: Duration(milliseconds: timeoutMs),
+        );
+
+        if (!reached) {
+          throw TimeoutException(
+            'Timed out waiting for typing state',
+            Duration(milliseconds: timeoutMs),
+          );
+        }
+
+        await ok({'sessionId': sessionId, 'isTyping': expectedTyping});
+        return;
+
+      case 'send_reaction':
+        final sessionId = payload['sessionId']?.toString() ?? '';
+        final messageId = payload['messageId']?.toString() ?? '';
+        final emoji = payload['emoji']?.toString() ?? '';
+        if (sessionId.isEmpty || messageId.isEmpty || emoji.isEmpty) {
+          throw ArgumentError(
+            'send_reaction requires sessionId, messageId, and emoji',
+          );
+        }
+
+        final myPubkey = container.read(authStateProvider).pubkeyHex;
+        if (myPubkey == null || myPubkey.isEmpty) {
+          throw StateError('No authenticated pubkey');
+        }
+
+        await container
+            .read(chatStateProvider.notifier)
+            .sendReaction(sessionId, messageId, emoji, myPubkey);
+        await ok({});
         return;
 
       case 'create_group':

@@ -519,6 +519,111 @@ void main() {
     }
   });
 
+  testWidgets('burst incoming messages are all received in order', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    if (!Platform.isMacOS) {
+      return;
+    }
+
+    final relay = await TestRelay.start();
+    final relayUrl = 'ws://127.0.0.1:${relay.port}';
+
+    _AppInstance? alice;
+    _AppInstance? bob;
+
+    try {
+      alice = await _startInstance(name: 'alice-burst', relayUrl: relayUrl);
+      bob = await _startInstance(name: 'bob-burst', relayUrl: relayUrl);
+
+      final aliceC = alice.container;
+      final bobC = bob.container;
+
+      final invite = await aliceC
+          .read(inviteStateProvider.notifier)
+          .createInvite(maxUses: 1);
+      expect(invite, isNotNull);
+
+      final inviteUrl = await aliceC
+          .read(inviteStateProvider.notifier)
+          .getInviteUrl(invite!.id);
+      expect(inviteUrl, isNotNull);
+
+      final data = decodeInviteUrlData(inviteUrl!);
+      final eph =
+          data?['ephemeralKey'] ??
+          data?['inviterEphemeralPublicKey'] ??
+          data?['inviterEphemeralPublicKeyHex'];
+      final inviteEph = eph is String ? eph : eph?.toString();
+      expect(inviteEph, isNotNull, reason: 'Invite URL missing ephemeral key');
+
+      await _pumpUntil(
+        condition: () =>
+            relay.hasKindAndPTagSubscription(kind: 1059, pTagValue: inviteEph!),
+        timeout: const Duration(seconds: 6),
+      );
+
+      final bobSessionId = await bobC
+          .read(inviteStateProvider.notifier)
+          .acceptInviteFromUrl(inviteUrl);
+      expect(bobSessionId, isNotNull);
+
+      final bobOwnerPubkey = bobC.read(authStateProvider).pubkeyHex;
+      expect(bobOwnerPubkey, isNotNull);
+
+      await _pumpUntil(
+        condition: () {
+          final sessions = aliceC.read(sessionStateProvider).sessions;
+          return sessions.any((s) => s.recipientPubkeyHex == bobOwnerPubkey);
+        },
+      );
+
+      final aliceSessionId = aliceC
+          .read(sessionStateProvider)
+          .sessions
+          .firstWhere((s) => s.recipientPubkeyHex == bobOwnerPubkey)
+          .id;
+
+      final base = DateTime.now().millisecondsSinceEpoch;
+      final burstTexts = List<String>.generate(
+        6,
+        (i) => 'burst bob->alice #$i @$base',
+      );
+
+      await Future.wait(
+        burstTexts.map(
+          (text) => bobC
+              .read(chatStateProvider.notifier)
+              .sendMessage(bobSessionId!, text),
+        ),
+      );
+
+      await _pumpUntil(
+        condition: () {
+          final msgs =
+              aliceC.read(chatStateProvider).messages[aliceSessionId] ?? [];
+          final incomingTexts = msgs
+              .where((m) => m.isIncoming)
+              .map((m) => m.text)
+              .toSet();
+          return burstTexts.every(incomingTexts.contains);
+        },
+        timeout: const Duration(seconds: 30),
+        debugOnTimeout: () {
+          return '--- alice state ---\n${_describeChatState(aliceC)}\n'
+              '--- bob state ---\n${_describeChatState(bobC)}\n'
+              '--- relay ---\n${_describeRelayDrEvents(relay)}';
+        },
+      );
+    } finally {
+      await alice?.dispose();
+      await bob?.dispose();
+      await relay.stop();
+    }
+  });
+
   testWidgets(
     'reopen app keeps receiving messages and handles multiple ratchet rounds',
     (tester) async {

@@ -47,6 +47,8 @@ class SessionManagerService {
   Timer? _drainTimer;
   bool _draining = false;
   bool _started = false;
+  bool _isDisposed = false;
+  Future<void> _opQueue = Future.value();
   final Map<String, int> _eventTimestamps = {};
   static const String _groupOuterSubId = 'ndr-group-outer';
   List<String> _groupOuterSenderEventPubkeys = const [];
@@ -58,30 +60,48 @@ class SessionManagerService {
     if (_started) return;
     _started = true;
 
-    await _initManager();
+    await _runExclusive(() async {
+      await _initManager();
+    });
 
-    _eventSubscription = _nostrService.events.listen(_handleEvent);
+    _eventSubscription = _nostrService.events.listen((event) {
+      _runExclusiveDetached(() async {
+        await _handleEvent(event);
+      });
+    });
 
     // Periodically drain events to avoid missing publishes/subscriptions.
     _drainTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
-      _drainEvents();
+      _runExclusiveDetached(() async {
+        await _drainEventsUnlocked();
+      });
     });
   }
 
   Future<void> dispose() async {
+    if (_isDisposed) return;
+    _isDisposed = true;
     await _eventSubscription?.cancel();
     _eventSubscription = null;
     _nostrService.closeSubscription(_groupOuterSubId);
     _groupOuterSenderEventPubkeys = const [];
     _drainTimer?.cancel();
     _drainTimer = null;
-    await _manager?.dispose();
+    try {
+      await _opQueue;
+    } catch (_) {}
+    final manager = _manager;
     _manager = null;
+    try {
+      await manager?.dispose();
+    } catch (_) {}
     await _decryptedController.close();
   }
 
   Future<void> refreshSubscription() async {
-    await _drainEvents();
+    await _runExclusive(() async {
+      await _drainEventsUnlocked();
+    });
   }
 
   Future<List<String>> sendText({
@@ -89,17 +109,19 @@ class SessionManagerService {
     required String text,
     int? expiresAtSeconds,
   }) async {
-    final manager = _manager;
-    if (manager == null) {
-      throw const NostrException('Session manager not initialized');
-    }
-    final eventIds = await manager.sendText(
-      recipientPubkeyHex: recipientPubkeyHex,
-      text: text,
-      expiresAtSeconds: expiresAtSeconds,
-    );
-    await _drainEvents();
-    return eventIds;
+    return _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      final eventIds = await manager.sendText(
+        recipientPubkeyHex: recipientPubkeyHex,
+        text: text,
+        expiresAtSeconds: expiresAtSeconds,
+      );
+      await _drainEventsUnlocked();
+      return eventIds;
+    });
   }
 
   Future<SendTextWithInnerIdResult> sendTextWithInnerId({
@@ -107,17 +129,19 @@ class SessionManagerService {
     required String text,
     int? expiresAtSeconds,
   }) async {
-    final manager = _manager;
-    if (manager == null) {
-      throw const NostrException('Session manager not initialized');
-    }
-    final sendResult = await manager.sendTextWithInnerId(
-      recipientPubkeyHex: recipientPubkeyHex,
-      text: text,
-      expiresAtSeconds: expiresAtSeconds,
-    );
-    await _drainEvents();
-    return sendResult;
+    return _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      final sendResult = await manager.sendTextWithInnerId(
+        recipientPubkeyHex: recipientPubkeyHex,
+        text: text,
+        expiresAtSeconds: expiresAtSeconds,
+      );
+      await _drainEventsUnlocked();
+      return sendResult;
+    });
   }
 
   Future<SendTextWithInnerIdResult> sendEventWithInnerId({
@@ -127,19 +151,21 @@ class SessionManagerService {
     required String tagsJson,
     int? createdAtSeconds,
   }) async {
-    final manager = _manager;
-    if (manager == null) {
-      throw const NostrException('Session manager not initialized');
-    }
-    final sendResult = await manager.sendEventWithInnerId(
-      recipientPubkeyHex: recipientPubkeyHex,
-      kind: kind,
-      content: content,
-      tagsJson: tagsJson,
-      createdAtSeconds: createdAtSeconds,
-    );
-    await _drainEvents();
-    return sendResult;
+    return _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      final sendResult = await manager.sendEventWithInnerId(
+        recipientPubkeyHex: recipientPubkeyHex,
+        kind: kind,
+        content: content,
+        tagsJson: tagsJson,
+        createdAtSeconds: createdAtSeconds,
+      );
+      await _drainEventsUnlocked();
+      return sendResult;
+    });
   }
 
   Future<void> groupUpsert({
@@ -153,24 +179,26 @@ class SessionManagerService {
     String? secret,
     bool? accepted,
   }) async {
-    final manager = _manager;
-    if (manager == null) {
-      throw const NostrException('Session manager not initialized');
-    }
-    await manager.groupUpsert(
-      FfiGroupData(
-        id: id,
-        name: name,
-        description: description,
-        picture: picture,
-        members: members,
-        admins: admins,
-        createdAtMs: createdAtMs,
-        secret: secret,
-        accepted: accepted,
-      ),
-    );
-    await _refreshGroupOuterSubscription();
+    await _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      await manager.groupUpsert(
+        FfiGroupData(
+          id: id,
+          name: name,
+          description: description,
+          picture: picture,
+          members: members,
+          admins: admins,
+          createdAtMs: createdAtMs,
+          secret: secret,
+          accepted: accepted,
+        ),
+      );
+      await _refreshGroupOuterSubscription();
+    });
   }
 
   Future<GroupCreateResult> groupCreate({
@@ -179,26 +207,30 @@ class SessionManagerService {
     bool fanoutMetadata = true,
     int? nowMs,
   }) async {
-    final manager = _manager;
-    if (manager == null) {
-      throw const NostrException('Session manager not initialized');
-    }
-    final created = await manager.groupCreate(
-      name: name,
-      memberOwnerPubkeys: memberOwnerPubkeys,
-      fanoutMetadata: fanoutMetadata,
-      nowMs: nowMs,
-    );
-    await _drainEvents();
-    await _refreshGroupOuterSubscription();
-    return created;
+    return _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      final created = await manager.groupCreate(
+        name: name,
+        memberOwnerPubkeys: memberOwnerPubkeys,
+        fanoutMetadata: fanoutMetadata,
+        nowMs: nowMs,
+      );
+      await _drainEventsUnlocked();
+      await _refreshGroupOuterSubscription();
+      return created;
+    });
   }
 
   Future<void> groupRemove(String groupId) async {
-    final manager = _manager;
-    if (manager == null) return;
-    await manager.groupRemove(groupId);
-    await _refreshGroupOuterSubscription();
+    await _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) return;
+      await manager.groupRemove(groupId);
+      await _refreshGroupOuterSubscription();
+    });
   }
 
   Future<GroupSendResult> groupSendEvent({
@@ -208,20 +240,22 @@ class SessionManagerService {
     required String tagsJson,
     int? nowMs,
   }) async {
-    final manager = _manager;
-    if (manager == null) {
-      throw const NostrException('Session manager not initialized');
-    }
-    final sendResult = await manager.groupSendEvent(
-      groupId: groupId,
-      kind: kind,
-      content: content,
-      tagsJson: tagsJson,
-      nowMs: nowMs,
-    );
-    await _drainEvents();
-    await _refreshGroupOuterSubscription();
-    return sendResult;
+    return _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      final sendResult = await manager.groupSendEvent(
+        groupId: groupId,
+        kind: kind,
+        content: content,
+        tagsJson: tagsJson,
+        nowMs: nowMs,
+      );
+      await _drainEventsUnlocked();
+      await _refreshGroupOuterSubscription();
+      return sendResult;
+    });
   }
 
   Future<List<GroupDecryptedResult>> groupHandleIncomingSessionEvent({
@@ -229,15 +263,17 @@ class SessionManagerService {
     required String fromOwnerPubkeyHex,
     String? fromSenderDevicePubkeyHex,
   }) async {
-    final manager = _manager;
-    if (manager == null) return const <GroupDecryptedResult>[];
-    final events = await manager.groupHandleIncomingSessionEvent(
-      eventJson: eventJson,
-      fromOwnerPubkeyHex: fromOwnerPubkeyHex,
-      fromSenderDevicePubkeyHex: fromSenderDevicePubkeyHex,
-    );
-    await _refreshGroupOuterSubscription();
-    return events;
+    return _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) return const <GroupDecryptedResult>[];
+      final events = await manager.groupHandleIncomingSessionEvent(
+        eventJson: eventJson,
+        fromOwnerPubkeyHex: fromOwnerPubkeyHex,
+        fromSenderDevicePubkeyHex: fromSenderDevicePubkeyHex,
+      );
+      await _refreshGroupOuterSubscription();
+      return events;
+    });
   }
 
   Future<void> sendReceipt({
@@ -245,27 +281,31 @@ class SessionManagerService {
     required String receiptType,
     required List<String> messageIds,
   }) async {
-    final manager = _manager;
-    if (manager == null) return;
-    await manager.sendReceipt(
-      recipientPubkeyHex: recipientPubkeyHex,
-      receiptType: receiptType,
-      messageIds: messageIds,
-    );
-    await _drainEvents();
+    await _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) return;
+      await manager.sendReceipt(
+        recipientPubkeyHex: recipientPubkeyHex,
+        receiptType: receiptType,
+        messageIds: messageIds,
+      );
+      await _drainEventsUnlocked();
+    });
   }
 
   Future<void> sendTyping({
     required String recipientPubkeyHex,
     int? expiresAtSeconds,
   }) async {
-    final manager = _manager;
-    if (manager == null) return;
-    await manager.sendTyping(
-      recipientPubkeyHex: recipientPubkeyHex,
-      expiresAtSeconds: expiresAtSeconds,
-    );
-    await _drainEvents();
+    await _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) return;
+      await manager.sendTyping(
+        recipientPubkeyHex: recipientPubkeyHex,
+        expiresAtSeconds: expiresAtSeconds,
+      );
+      await _drainEventsUnlocked();
+    });
   }
 
   Future<void> sendReaction({
@@ -273,14 +313,16 @@ class SessionManagerService {
     required String messageId,
     required String emoji,
   }) async {
-    final manager = _manager;
-    if (manager == null) return;
-    await manager.sendReaction(
-      recipientPubkeyHex: recipientPubkeyHex,
-      messageId: messageId,
-      emoji: emoji,
-    );
-    await _drainEvents();
+    await _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) return;
+      await manager.sendReaction(
+        recipientPubkeyHex: recipientPubkeyHex,
+        messageId: messageId,
+        emoji: emoji,
+      );
+      await _drainEventsUnlocked();
+    });
   }
 
   Future<void> importSessionState({
@@ -288,57 +330,67 @@ class SessionManagerService {
     required String stateJson,
     String? deviceId,
   }) async {
-    final manager = _manager;
-    if (manager == null) return;
-    await manager.importSessionState(
-      peerPubkeyHex: peerPubkeyHex,
-      stateJson: stateJson,
-      deviceId: deviceId,
-    );
+    await _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) return;
+      await manager.importSessionState(
+        peerPubkeyHex: peerPubkeyHex,
+        stateJson: stateJson,
+        deviceId: deviceId,
+      );
+    });
   }
 
   Future<String?> getActiveSessionState(String peerPubkeyHex) async {
-    final manager = _manager;
-    if (manager == null) return null;
-    return manager.getActiveSessionState(peerPubkeyHex);
+    return _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) return null;
+      return manager.getActiveSessionState(peerPubkeyHex);
+    });
   }
 
   Future<int> getTotalSessions() async {
-    final manager = _manager;
-    if (manager == null) return 0;
-    return manager.getTotalSessions();
+    return _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) return 0;
+      return manager.getTotalSessions();
+    });
   }
 
   Future<SessionManagerAcceptInviteResult> acceptInviteFromUrl({
     required String inviteUrl,
     String? ownerPubkeyHintHex,
   }) async {
-    final manager = _manager;
-    if (manager == null) {
-      throw const NostrException('Session manager not initialized');
-    }
-    final result = await manager.acceptInviteFromUrl(
-      inviteUrl: inviteUrl,
-      ownerPubkeyHintHex: ownerPubkeyHintHex,
-    );
-    await _drainEvents();
-    return result;
+    return _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      final result = await manager.acceptInviteFromUrl(
+        inviteUrl: inviteUrl,
+        ownerPubkeyHintHex: ownerPubkeyHintHex,
+      );
+      await _drainEventsUnlocked();
+      return result;
+    });
   }
 
   Future<SessionManagerAcceptInviteResult> acceptInviteFromEventJson({
     required String eventJson,
     String? ownerPubkeyHintHex,
   }) async {
-    final manager = _manager;
-    if (manager == null) {
-      throw const NostrException('Session manager not initialized');
-    }
-    final result = await manager.acceptInviteFromEventJson(
-      eventJson: eventJson,
-      ownerPubkeyHintHex: ownerPubkeyHintHex,
-    );
-    await _drainEvents();
-    return result;
+    return _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      final result = await manager.acceptInviteFromEventJson(
+        eventJson: eventJson,
+        ownerPubkeyHintHex: ownerPubkeyHintHex,
+      );
+      await _drainEventsUnlocked();
+      return result;
+    });
   }
 
   Future<void> _initManager() async {
@@ -371,7 +423,7 @@ class SessionManagerService {
     _ownerPubkeyHex = await _manager!.getOwnerPubkeyHex();
     _devicePubkeyHex = devicePubkeyHex;
 
-    await _drainEvents();
+    await _drainEventsUnlocked();
     await _refreshGroupOuterSubscription();
   }
 
@@ -424,7 +476,7 @@ class SessionManagerService {
         }
       } catch (_) {}
     }
-    await _drainEvents();
+    await _drainEventsUnlocked();
   }
 
   String _resolveGroupSenderPubkeyHex(GroupDecryptedResult decrypted) {
@@ -483,9 +535,9 @@ class SessionManagerService {
     return true;
   }
 
-  Future<void> _drainEvents() async {
+  Future<void> _drainEventsUnlocked() async {
     final manager = _manager;
-    if (manager == null || _draining) return;
+    if (manager == null || _draining || _isDisposed) return;
     _draining = true;
     try {
       while (true) {
@@ -567,5 +619,36 @@ class SessionManagerService {
         // Optional: forward to app if needed.
         break;
     }
+  }
+
+  Future<T> _runExclusive<T>(Future<T> Function() action) {
+    final completer = Completer<T>();
+
+    _opQueue = _opQueue
+        .then((_) async {
+          if (_isDisposed) {
+            throw const NostrException('Session manager disposed');
+          }
+          final result = await action();
+          if (!completer.isCompleted) {
+            completer.complete(result);
+          }
+        })
+        .catchError((error, stackTrace) {
+          if (!completer.isCompleted) {
+            completer.completeError(error, stackTrace);
+          }
+        });
+
+    return completer.future;
+  }
+
+  void _runExclusiveDetached(Future<void> Function() action) {
+    _opQueue = _opQueue
+        .then((_) async {
+          if (_isDisposed) return;
+          await action();
+        })
+        .catchError((error, stackTrace) {});
   }
 }

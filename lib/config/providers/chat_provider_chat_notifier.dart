@@ -965,7 +965,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   /// Send a reaction to a message.
-  /// Note: messageId here is the internal message ID, we need to use eventId for the reaction payload
+  /// Prefer stable inner rumor ids for cross-client compatibility.
   Future<void> sendReaction(
     String sessionId,
     String messageId,
@@ -984,13 +984,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
         ),
       );
 
-      // Use the outer Nostr event id when available. Fall back to the stable inner id
-      // (rumor id) rather than the local UI id.
+      // Use stable inner ids first; many clients index reactions by inner rumor id.
+      // Fall back to outer id for older locally-stored messages.
       final reactionMessageId =
-          (message.eventId != null && message.eventId!.isNotEmpty)
-          ? message.eventId!
-          : (message.rumorId != null && message.rumorId!.isNotEmpty)
+          (message.rumorId != null && message.rumorId!.isNotEmpty)
           ? message.rumorId!
+          : (message.eventId != null && message.eventId!.isNotEmpty)
+          ? message.eventId!
           : null;
       if (reactionMessageId == null) {
         throw const AppError(
