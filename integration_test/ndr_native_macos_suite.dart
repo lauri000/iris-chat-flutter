@@ -169,6 +169,7 @@ void main() {
       final v = await NdrFfi.version();
       expect(v, isNotEmpty);
       expect(v, isNot('unknown'));
+      expect(v, '0.0.76');
 
       final kp = await NdrFfi.generateKeypair();
       expect(kp.publicKeyHex, hasLength(64));
