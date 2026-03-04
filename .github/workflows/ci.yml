@@ -24,7 +24,7 @@ jobs:
           cache: true
 
       - name: Get dependencies
-        run: flutter pub get --enforce-lockfile
+        run: flutter pub get
 
       - name: Generate code
         run: dart run build_runner build --delete-conflicting-outputs
@@ -57,7 +57,7 @@ jobs:
           cache: true
 
       - name: Get dependencies
-        run: flutter pub get --enforce-lockfile
+        run: flutter pub get
 
       - name: Generate code
         run: dart run build_runner build --delete-conflicting-outputs
@@ -86,7 +86,7 @@ jobs:
           cache: true
 
       - name: Get dependencies
-        run: flutter pub get --enforce-lockfile
+        run: flutter pub get
 
       - name: Generate code
         run: dart run build_runner build --delete-conflicting-outputs
