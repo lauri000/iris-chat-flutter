@@ -15,6 +15,7 @@ import '../../features/invite/data/datasources/invite_local_datasource.dart';
 import '../../features/invite/domain/models/invite.dart';
 import 'auth_provider.dart';
 import 'chat_provider.dart';
+import 'device_manager_provider.dart';
 import 'nostr_provider.dart';
 
 part 'invite_provider.freezed.dart';
@@ -537,6 +538,66 @@ class InviteNotifier extends StateNotifier<InviteState> {
         s.contains('cryptofailure("invalid hmac")');
   }
 
+  static String? _normalizeDevicePubkeyHex(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) return null;
+    return normalized;
+  }
+
+  static void _upsertDeviceCreatedAt(
+    Map<String, int> devices, {
+    required String identityPubkeyHex,
+    required int createdAt,
+    required int nowSeconds,
+  }) {
+    final normalized = _normalizeDevicePubkeyHex(identityPubkeyHex);
+    if (normalized == null) return;
+    final timestamp = createdAt > 0 ? createdAt : nowSeconds;
+    final existing = devices[normalized];
+    if (existing == null || timestamp < existing) {
+      devices[normalized] = timestamp;
+    }
+  }
+
+  /// Build the device map that will be published in an AppKeys update.
+  ///
+  /// This intentionally keeps both locally known and relay-discovered devices
+  /// so link acceptance cannot accidentally collapse the set to only a subset.
+  static Map<String, int> buildMergedDeviceMap({
+    required List<FfiDeviceEntry> localDevices,
+    required List<FfiDeviceEntry> relayDevices,
+    required Set<String> ensurePubkeys,
+    required int nowSeconds,
+  }) {
+    final devices = <String, int>{};
+
+    for (final device in localDevices) {
+      _upsertDeviceCreatedAt(
+        devices,
+        identityPubkeyHex: device.identityPubkeyHex,
+        createdAt: device.createdAt,
+        nowSeconds: nowSeconds,
+      );
+    }
+
+    for (final device in relayDevices) {
+      _upsertDeviceCreatedAt(
+        devices,
+        identityPubkeyHex: device.identityPubkeyHex,
+        createdAt: device.createdAt,
+        nowSeconds: nowSeconds,
+      );
+    }
+
+    for (final pubkey in ensurePubkeys) {
+      final normalized = _normalizeDevicePubkeyHex(pubkey);
+      if (normalized == null) continue;
+      devices.putIfAbsent(normalized, () => nowSeconds);
+    }
+
+    return devices;
+  }
+
   Future<void> _publishMergedAppKeys({
     required String ownerPubkeyHex,
     required String ownerPrivkeyHex,
@@ -550,20 +611,19 @@ class InviteNotifier extends StateNotifier<InviteState> {
     );
 
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final Map<String, int> devices = {};
-
+    final localDevices = _ref.read(deviceManagerProvider).devices;
+    final relayDevices = <FfiDeviceEntry>[];
     if (existing != null) {
-      final parsed = await NdrFfi.parseAppKeysEvent(
-        jsonEncode(existing.toJson()),
+      relayDevices.addAll(
+        await NdrFfi.parseAppKeysEvent(jsonEncode(existing.toJson())),
       );
-      for (final entry in parsed) {
-        devices[entry.identityPubkeyHex] = entry.createdAt;
-      }
     }
-
-    for (final pk in devicePubkeysToEnsure) {
-      devices.putIfAbsent(pk, () => now);
-    }
+    final devices = buildMergedDeviceMap(
+      localDevices: localDevices,
+      relayDevices: relayDevices,
+      ensurePubkeys: devicePubkeysToEnsure,
+      nowSeconds: now,
+    );
 
     final eventJson = await NdrFfi.createSignedAppKeysEvent(
       ownerPubkeyHex: ownerPubkeyHex,

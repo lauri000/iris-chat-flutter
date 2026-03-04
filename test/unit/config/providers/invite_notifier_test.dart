@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:iris_chat/config/providers/invite_provider.dart';
+import 'package:iris_chat/core/ffi/ndr_ffi.dart';
 import 'package:iris_chat/features/invite/data/datasources/invite_local_datasource.dart';
 import 'package:iris_chat/features/invite/domain/models/invite.dart';
 import 'package:mocktail/mocktail.dart';
@@ -246,6 +247,25 @@ void main() {
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
               .setMockMethodCallHandler(channel, null);
         }
+      });
+    });
+
+    group('buildMergedDeviceMap', () {
+      test('keeps local devices when relay list is empty', () {
+        final devices = InviteNotifier.buildMergedDeviceMap(
+          localDevices: const <FfiDeviceEntry>[
+            FfiDeviceEntry(identityPubkeyHex: 'aaaa', createdAt: 100),
+            FfiDeviceEntry(identityPubkeyHex: 'bbbb', createdAt: 200),
+          ],
+          relayDevices: const <FfiDeviceEntry>[],
+          ensurePubkeys: const <String>{'cccc'},
+          nowSeconds: 999,
+        );
+
+        expect(devices.keys.toSet(), {'aaaa', 'bbbb', 'cccc'});
+        expect(devices['aaaa'], 100);
+        expect(devices['bbbb'], 200);
+        expect(devices['cccc'], 999);
       });
     });
   });
