@@ -836,7 +836,7 @@ void main() {
 
         await tester.scrollUntilVisible(find.text('Version'), 300);
         expect(find.text('Version'), findsOneWidget);
-        expect(find.text('1.0.0'), findsOneWidget);
+        expect(find.text('2.6.0'), findsOneWidget);
         expect(find.byIcon(Icons.info), findsOneWidget);
       });
 

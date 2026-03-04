@@ -1,7 +1,7 @@
 name: iris_chat
 description: End-to-end encrypted chat app using Nostr Double Ratchet protocol.
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.6.0+1
 
 environment:
   sdk: ^3.8.0
