@@ -59,7 +59,7 @@ void main() {
         .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
           switch (methodCall.method) {
             case 'version':
-              return '0.0.76';
+              return '0.0.77';
 
             case 'derivePublicKey':
               final privkey = methodCall.arguments['privkeyHex'] as String;

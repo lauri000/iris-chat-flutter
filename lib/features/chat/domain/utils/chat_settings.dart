@@ -2,7 +2,7 @@ import 'dart:convert';
 
 /// Inner rumor kind used for 1:1 chat settings signaling (Iris convention).
 ///
-/// See `nostr-double-ratchet` v0.0.76 "Disappearing Message Signaling".
+/// See `nostr-double-ratchet` v0.0.77 "Disappearing Message Signaling".
 const int kChatSettingsKind = 10448;
 
 /// Parsed "chat-settings" payload.
