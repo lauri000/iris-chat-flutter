@@ -333,6 +333,8 @@ void main() {
   Widget buildSettingsScreen({
     String? pubkeyHex,
     bool isAuthenticated = true,
+    bool isLinkedDevice = false,
+    String? devicePubkeyHex,
     FakeStartupLaunchService? startupService,
     FakeMessagingPreferencesService? messagingService,
     FakeImgproxySettingsService? imgproxyService,
@@ -363,6 +365,8 @@ void main() {
         notifier.state = AuthState(
           isAuthenticated: isAuthenticated,
           pubkeyHex: pubkeyHex,
+          devicePubkeyHex: devicePubkeyHex,
+          isLinkedDevice: isLinkedDevice,
           isInitialized: true,
         );
         return notifier;
@@ -740,6 +744,86 @@ void main() {
     });
 
     group('devices section', () {
+      testWidgets('shows registered devices as read-only on linked devices', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          buildSettingsScreen(
+            pubkeyHex: testPubkeyHex,
+            isLinkedDevice: true,
+            devicePubkeyHex: '3333',
+            deviceManagerState: const DeviceManagerState(
+              isLoading: false,
+              currentDevicePubkeyHex: '3333',
+              devices: [
+                FfiDeviceEntry(
+                  identityPubkeyHex: '2222',
+                  createdAt: 1700000000,
+                ),
+                FfiDeviceEntry(
+                  identityPubkeyHex: '3333',
+                  createdAt: 1700001000,
+                ),
+              ],
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Device Access'), findsOneWidget);
+        expect(
+          find.text(
+            'Read-only on this device. Use your main private key to add or remove devices.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.textContaining('This device'), findsWidgets);
+        expect(find.byTooltip('Delete device'), findsNothing);
+        expect(find.byTooltip('Remove this device'), findsNothing);
+        expect(find.text('Register This Device'), findsNothing);
+      });
+
+      testWidgets(
+        'shows unregistered imported-session copy instead of main-client copy',
+        (tester) async {
+          await tester.pumpWidget(
+            buildSettingsScreen(
+              pubkeyHex: testPubkeyHex,
+              isLinkedDevice: true,
+              devicePubkeyHex: '1111',
+              deviceManagerState: const DeviceManagerState(
+                isLoading: false,
+                currentDevicePubkeyHex: '1111',
+                devices: [
+                  FfiDeviceEntry(
+                    identityPubkeyHex: '2222',
+                    createdAt: 1700000000,
+                  ),
+                ],
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          expect(
+            find.text(
+              'Signed in as your identity on this device. This device list is read-only until it is registered.',
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.text(
+              'This device cannot link new devices until it is registered',
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.text('Manage registered devices on your main client'),
+            findsNothing,
+          );
+        },
+      );
+
       testWidgets(
         'shows register button when current device is not registered',
         (tester) async {
@@ -836,7 +920,7 @@ void main() {
 
         await tester.scrollUntilVisible(find.text('Version'), 300);
         expect(find.text('Version'), findsOneWidget);
-        expect(find.text('2.6.0'), findsOneWidget);
+        expect(find.text('2.6.1'), findsOneWidget);
         expect(find.byIcon(Icons.info), findsOneWidget);
       });
 

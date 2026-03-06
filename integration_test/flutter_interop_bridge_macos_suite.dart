@@ -623,10 +623,14 @@ Future<void> _handleCommand({
                 devicePrivkeyHex: pending.devicePrivkeyHex,
               );
 
-          // Reload state and (re)wire subscriptions for the newly-linked identity.
-          container.read(messageSubscriptionProvider);
+          // Mirror app bootstrap for linked-device login so invite/session
+          // transport is fully republished before interop assertions run.
           await container.read(sessionStateProvider.notifier).loadSessions();
           await container.read(inviteStateProvider.notifier).loadInvites();
+          await container
+              .read(inviteStateProvider.notifier)
+              .ensurePublishedPublicInvite();
+          container.read(messageSubscriptionProvider);
 
           final authState = container.read(authStateProvider);
           if (!authState.isAuthenticated || authState.pubkeyHex == null) {

@@ -34,6 +34,7 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authStateProvider);
     final deviceState = ref.watch(deviceManagerProvider);
+    final canManageDevices = !authState.isLinkedDevice;
     final startupLaunchState = ref.watch(startupLaunchProvider);
     final messagingPreferences = ref.watch(messagingPreferencesProvider);
     final imgproxySettings = ref.watch(imgproxySettingsProvider);
@@ -121,7 +122,7 @@ class SettingsScreen extends ConsumerWidget {
               title: const Text('Profile'),
               subtitle: Text(
                 authState.isLinkedDevice
-                    ? 'Linked devices cannot edit owner profile'
+                    ? 'This device cannot edit the owner profile'
                     : _profileSummary(ownProfile),
               ),
               onTap: () => _showEditProfileDialog(
@@ -138,16 +139,15 @@ class SettingsScreen extends ConsumerWidget {
             leading: const Icon(Icons.devices),
             title: const Text('Link a Device'),
             subtitle: Text(
-              authState.isLinkedDevice
-                  ? 'Linked devices cannot link new devices'
-                  : 'Scan a link invite from the new device',
+              _deviceLinkSubtitle(
+                isLinkedDevice: authState.isLinkedDevice,
+                isCurrentDeviceRegistered:
+                    deviceState.isCurrentDeviceRegistered,
+              ),
             ),
-            onTap: authState.isLinkedDevice
-                ? null
-                : () => context.push('/invite/scan'),
+            onTap: canManageDevices ? () => context.push('/invite/scan') : null,
           ),
-          if (!authState.isLinkedDevice &&
-              !deviceState.isCurrentDeviceRegistered)
+          if (canManageDevices && !deviceState.isCurrentDeviceRegistered)
             ListTile(
               leading: const Icon(Icons.app_registration),
               title: const Text('Register This Device'),
@@ -159,12 +159,17 @@ class SettingsScreen extends ConsumerWidget {
                   : () => _registerCurrentDevice(context, ref),
             ),
           if (authState.isLinkedDevice)
-            const ListTile(
-              leading: Icon(Icons.info_outline),
-              title: Text('Device Management'),
-              subtitle: Text('Manage registered devices on your main client'),
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('Device Access'),
+              subtitle: Text(
+                _deviceAccessSubtitle(
+                  isCurrentDeviceRegistered:
+                      deviceState.isCurrentDeviceRegistered,
+                ),
+              ),
             ),
-          if (!authState.isLinkedDevice && deviceState.isLoading)
+          if (deviceState.isLoading)
             const ListTile(
               leading: SizedBox(
                 width: 20,
@@ -173,50 +178,52 @@ class SettingsScreen extends ConsumerWidget {
               ),
               title: Text('Loading registered devices...'),
             ),
-          if (!authState.isLinkedDevice &&
-              !deviceState.isLoading &&
-              deviceState.devices.isEmpty)
-            const ListTile(
+          if (!deviceState.isLoading && deviceState.devices.isEmpty)
+            ListTile(
               leading: Icon(Icons.devices_other),
-              title: Text('No registered devices yet'),
+              title: const Text('No registered devices yet'),
               subtitle: Text(
-                'Register this device to enable multi-device sync',
+                canManageDevices
+                    ? 'Register this device to enable multi-device sync'
+                    : 'Registered devices will appear here in read-only mode',
               ),
             ),
-          if (!authState.isLinkedDevice)
-            ...deviceState.devices.map((device) {
-              final isCurrent =
-                  device.identityPubkeyHex ==
-                  deviceState.currentDevicePubkeyHex;
-              final addedAt = DateTime.fromMillisecondsSinceEpoch(
-                device.createdAt * 1000,
-              );
-              return ListTile(
-                leading: const Icon(Icons.computer),
-                title: Text(
-                  formatPubkeyForDisplay(
-                    formatPubkeyAsNpub(device.identityPubkeyHex),
-                  ),
+          ...deviceState.devices.map((device) {
+            final isCurrent =
+                device.identityPubkeyHex == deviceState.currentDevicePubkeyHex;
+            final addedAt = DateTime.fromMillisecondsSinceEpoch(
+              device.createdAt * 1000,
+            );
+            return ListTile(
+              leading: const Icon(Icons.computer),
+              title: Text(
+                formatPubkeyForDisplay(
+                  formatPubkeyAsNpub(device.identityPubkeyHex),
                 ),
-                subtitle: Text(
-                  isCurrent
-                      ? 'This device • Added ${formatDate(addedAt)}'
-                      : 'Added ${formatDate(addedAt)}',
-                ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  tooltip: isCurrent ? 'Remove this device' : 'Delete device',
-                  onPressed: deviceState.isUpdating
-                      ? null
-                      : () => _confirmDeleteDevice(
-                          context,
-                          ref,
-                          identityPubkeyHex: device.identityPubkeyHex,
-                          isCurrentDevice: isCurrent,
-                        ),
-                ),
-              );
-            }),
+              ),
+              subtitle: Text(
+                isCurrent
+                    ? 'This device • Added ${formatDate(addedAt)}'
+                    : 'Added ${formatDate(addedAt)}',
+              ),
+              trailing: canManageDevices
+                  ? IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: isCurrent
+                          ? 'Remove this device'
+                          : 'Delete device',
+                      onPressed: deviceState.isUpdating
+                          ? null
+                          : () => _confirmDeleteDevice(
+                              context,
+                              ref,
+                              identityPubkeyHex: device.identityPubkeyHex,
+                              isCurrentDevice: isCurrent,
+                            ),
+                    )
+                  : null,
+            );
+          }),
           if (deviceState.error != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -520,7 +527,7 @@ class SettingsScreen extends ConsumerWidget {
           const ListTile(
             leading: Icon(Icons.info),
             title: Text('Version'),
-            subtitle: Text('2.6.0'),
+            subtitle: Text('2.6.1'),
           ),
           ListTile(
             leading: const Icon(Icons.code),
@@ -570,7 +577,7 @@ class SettingsScreen extends ConsumerWidget {
         builder: (context) => AlertDialog(
           title: const Text('Export Private Key'),
           content: const Text(
-            'This is a linked device. It does not store your main private key.',
+            'This device does not store your main private key.',
           ),
           actions: [
             TextButton(
@@ -657,6 +664,26 @@ class SettingsScreen extends ConsumerWidget {
     if (name != null) return name;
     if (hasPicture) return 'Picture set';
     return 'No profile metadata published';
+  }
+
+  String _deviceLinkSubtitle({
+    required bool isLinkedDevice,
+    required bool isCurrentDeviceRegistered,
+  }) {
+    if (!isLinkedDevice) {
+      return 'Scan a link invite from the new device';
+    }
+    if (isCurrentDeviceRegistered) {
+      return 'Only a device with your main private key can link new devices';
+    }
+    return 'This device cannot link new devices until it is registered';
+  }
+
+  String _deviceAccessSubtitle({required bool isCurrentDeviceRegistered}) {
+    if (isCurrentDeviceRegistered) {
+      return 'Read-only on this device. Use your main private key to add or remove devices.';
+    }
+    return 'Signed in as your identity on this device. This device list is read-only until it is registered.';
   }
 
   String _ellipsizeMiddle(String value, {int head = 22, int tail = 16}) {
@@ -751,7 +778,7 @@ class SettingsScreen extends ConsumerWidget {
         builder: (dialogContext) => AlertDialog(
           title: const Text('Profile Editing'),
           content: const Text(
-            'Linked devices cannot publish profile metadata for the owner key.',
+            'This device does not store your main private key, so it cannot publish profile metadata for the owner key.',
           ),
           actions: [
             TextButton(
