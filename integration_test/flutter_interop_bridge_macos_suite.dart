@@ -10,6 +10,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:iris_chat/config/providers/auth_provider.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/config/providers/invite_provider.dart';
+import 'package:iris_chat/config/providers/login_device_registration_provider.dart';
 import 'package:iris_chat/config/providers/nostr_provider.dart';
 import 'package:iris_chat/core/ffi/ndr_ffi.dart';
 import 'package:iris_chat/core/services/database_service.dart';
@@ -1095,6 +1096,10 @@ void main() {
     const privateKeyNsec = String.fromEnvironment(
       'IRIS_INTEROP_PRIVATE_KEY_NSEC',
     );
+    const registerDeviceFlag = String.fromEnvironment(
+      'IRIS_INTEROP_REGISTER_DEVICE',
+    );
+    final registerDeviceOnLogin = registerDeviceFlag == '1';
 
     final relayUrls = relayUrlsRaw
         .split(',')
@@ -1139,8 +1144,33 @@ void main() {
     );
 
     try {
+      await container.read(nostrServiceProvider).connect();
+
       if (privateKeyNsec.trim().isNotEmpty) {
-        await container.read(authStateProvider.notifier).login(privateKeyNsec);
+        if (registerDeviceOnLogin) {
+          final registrationService = container.read(
+            loginDeviceRegistrationServiceProvider,
+          );
+          final preview = await registrationService
+              .buildPreviewFromPrivateKeyNsec(privateKeyNsec);
+
+          await container
+              .read(authStateProvider.notifier)
+              .login(
+                privateKeyNsec,
+                devicePrivkeyHex: preview.currentDevicePrivkeyHex,
+              );
+
+          await registrationService.publishDeviceList(
+            ownerPubkeyHex: preview.ownerPubkeyHex,
+            ownerPrivkeyHex: preview.ownerPrivkeyHex,
+            devices: preview.devicesIfRegistered,
+          );
+        } else {
+          await container
+              .read(authStateProvider.notifier)
+              .login(privateKeyNsec);
+        }
       } else {
         await container.read(authStateProvider.notifier).createIdentity();
       }
@@ -1151,7 +1181,6 @@ void main() {
         isTrue,
         reason: authState.error ?? 'Bridge auth failed',
       );
-      await container.read(nostrServiceProvider).connect();
       await container
           .read(inviteStateProvider.notifier)
           .ensurePublishedPublicInvite();
