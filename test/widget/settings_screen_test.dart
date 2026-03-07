@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -539,6 +541,35 @@ void main() {
         await tester.pumpAndSettle();
 
         verify(() => mockNostrService.publishEvent(any())).called(1);
+        expect(find.text('Edit Profile'), findsNothing);
+      });
+
+      testWidgets('closes profile editor before publish completes', (
+        tester,
+      ) async {
+        final publishCompleter = Completer<void>();
+        when(
+          () => mockAuthRepo.getPrivateKey(),
+        ).thenAnswer((_) async => testPrivkeyHex);
+        when(
+          () => mockNostrService.publishEvent(any()),
+        ).thenAnswer((_) => publishCompleter.future);
+
+        await tester.pumpWidget(buildSettingsScreen(pubkeyHex: testPubkeyHex));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Profile'));
+        await tester.pumpAndSettle();
+
+        await tester.enterText(find.byType(TextField).at(0), 'Alice');
+        await tester.tap(find.widgetWithText(TextButton, 'Save'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.text('Edit Profile'), findsNothing);
+
+        publishCompleter.complete();
+        await tester.pumpAndSettle();
       });
     });
 

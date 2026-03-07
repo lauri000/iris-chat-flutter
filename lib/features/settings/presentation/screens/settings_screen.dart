@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -827,17 +828,27 @@ class SettingsScreen extends ConsumerWidget {
           ),
           TextButton(
             onPressed: () async {
-              final saved = await _saveProfileMetadata(
+              final draft = await _prepareProfileMetadataSave(
                 context,
                 ref,
-                ownerPubkeyHex: ownerPubkeyHex,
                 name: nameController.text,
                 pictureUrl: pictureController.text,
-                existingProfile: existingProfile,
               );
-              if (saved && dialogContext.mounted) {
-                Navigator.pop(dialogContext);
+              if (draft == null) return;
+              if (dialogContext.mounted) {
+                Navigator.of(dialogContext, rootNavigator: true).pop();
               }
+              unawaited(
+                _saveProfileMetadata(
+                  context,
+                  ref,
+                  ownerPubkeyHex: ownerPubkeyHex,
+                  privkey: draft.privkey,
+                  name: draft.name,
+                  pictureUrl: draft.pictureUrl,
+                  existingProfile: existingProfile,
+                ),
+              );
             },
             child: const Text('Save'),
           ),
@@ -846,13 +857,12 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  Future<bool> _saveProfileMetadata(
+  Future<({String privkey, String name, String pictureUrl})?>
+  _prepareProfileMetadataSave(
     BuildContext context,
     WidgetRef ref, {
-    required String ownerPubkeyHex,
     required String name,
     required String pictureUrl,
-    required NostrProfile? existingProfile,
   }) async {
     final authRepo = ref.read(authRepositoryProvider);
     final privkey = await authRepo.getPrivateKey();
@@ -862,7 +872,7 @@ class SettingsScreen extends ConsumerWidget {
           const SnackBar(content: Text('Private key is unavailable')),
         );
       }
-      return false;
+      return null;
     }
 
     final trimmedName = name.trim();
@@ -875,9 +885,24 @@ class SettingsScreen extends ConsumerWidget {
             const SnackBar(content: Text('Profile picture URL is invalid')),
           );
         }
-        return false;
+        return null;
       }
     }
+
+    return (privkey: privkey, name: trimmedName, pictureUrl: trimmedPicture);
+  }
+
+  Future<void> _saveProfileMetadata(
+    BuildContext context,
+    WidgetRef ref, {
+    required String ownerPubkeyHex,
+    required String privkey,
+    required String name,
+    required String pictureUrl,
+    required NostrProfile? existingProfile,
+  }) async {
+    final trimmedName = name.trim();
+    final trimmedPicture = pictureUrl.trim();
 
     final content = <String, dynamic>{};
     if (trimmedName.isNotEmpty) {
@@ -923,14 +948,12 @@ class SettingsScreen extends ConsumerWidget {
           context,
         ).showSnackBar(const SnackBar(content: Text('Profile updated')));
       }
-      return true;
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to update profile: $e')));
       }
-      return false;
     }
   }
 
