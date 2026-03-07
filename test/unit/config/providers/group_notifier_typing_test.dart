@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/core/services/session_manager_service.dart';
@@ -24,8 +26,20 @@ void main() {
       '1111111111111111111111111111111111111111111111111111111111111111';
   const peerPubkey =
       '2222222222222222222222222222222222222222222222222222222222222222';
+  const peerDevicePubkey =
+      '3333333333333333333333333333333333333333333333333333333333333333';
 
   setUpAll(() {
+    registerFallbackValue(<String>[]);
+    registerFallbackValue(
+      ChatGroup(
+        id: 'fallback-group',
+        name: 'Fallback Group',
+        members: const [myPubkey],
+        admins: const [myPubkey],
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      ),
+    );
     registerFallbackValue(
       ChatMessage(
         id: 'fallback',
@@ -49,6 +63,20 @@ void main() {
       mockGroupMessageDatasource,
       mockSessionManagerService,
     );
+
+    when(
+      () => mockSessionManagerService.groupUpsert(
+        id: any(named: 'id'),
+        name: any(named: 'name'),
+        description: any(named: 'description'),
+        picture: any(named: 'picture'),
+        members: any(named: 'members'),
+        admins: any(named: 'admins'),
+        createdAtMs: any(named: 'createdAtMs'),
+        secret: any(named: 'secret'),
+        accepted: any(named: 'accepted'),
+      ),
+    ).thenAnswer((_) async {});
   });
 
   test('incoming group message clears active typing indicator', () async {
@@ -127,4 +155,94 @@ void main() {
       expect(notifier.state.typingStates[groupId] ?? false, isFalse);
     },
   );
+
+  test(
+    'incoming group metadata uses authenticated sender owner when rumor pubkey is a device key',
+    () async {
+      const groupId = 'group-owner-metadata';
+      const content =
+          '{"id":"$groupId","name":"Owner Group","members":["$myPubkey","$peerPubkey"],"admins":["$peerPubkey"],"secret":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}';
+      final metadataRumorJson = jsonEncode({
+        'id': 'metadata-1',
+        'pubkey': peerDevicePubkey,
+        'created_at': 1700000001,
+        'kind': 40,
+        'content': content,
+        'tags': [
+          ['l', groupId],
+        ],
+      });
+
+      when(
+        () => mockGroupDatasource.getGroup(groupId),
+      ).thenAnswer((_) async => null);
+      when(() => mockGroupDatasource.saveGroup(any())).thenAnswer((_) async {});
+
+      await notifier.handleIncomingGroupRumorJson(
+        metadataRumorJson,
+        senderPubkeyHex: peerPubkey,
+      );
+
+      expect(notifier.state.groups, hasLength(1));
+      expect(notifier.state.groups.single.id, groupId);
+      expect(notifier.state.groups.single.name, 'Owner Group');
+      expect(notifier.state.groups.single.members, [myPubkey, peerPubkey]);
+      expect(notifier.state.groups.single.accepted, isFalse);
+    },
+  );
+
+  test('incoming group message stores authenticated sender owner', () async {
+    const groupId = 'group-owner-message';
+
+    notifier.state = notifier.state.copyWith(
+      groups: [
+        ChatGroup(
+          id: groupId,
+          name: 'Group 1',
+          members: [myPubkey, peerPubkey],
+          admins: [peerPubkey],
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+          accepted: true,
+        ),
+      ],
+    );
+
+    when(
+      () => mockGroupMessageDatasource.messageExists(any()),
+    ).thenAnswer((_) async => false);
+    when(
+      () => mockGroupMessageDatasource.saveMessage(any()),
+    ).thenAnswer((_) async {});
+    when(
+      () => mockGroupDatasource.updateMetadata(
+        any(),
+        lastMessageAt: any(named: 'lastMessageAt'),
+        lastMessagePreview: any(named: 'lastMessagePreview'),
+        unreadCount: any(named: 'unreadCount'),
+        accepted: any(named: 'accepted'),
+        messageTtlSeconds: any(named: 'messageTtlSeconds'),
+      ),
+    ).thenAnswer((_) async {});
+
+    final messageRumorJson = jsonEncode({
+      'id': 'msg-owner-1',
+      'pubkey': peerDevicePubkey,
+      'created_at': 1700000002,
+      'kind': 14,
+      'content': 'hello from owner',
+      'tags': [
+        ['l', groupId],
+      ],
+    });
+
+    await notifier.handleIncomingGroupRumorJson(
+      messageRumorJson,
+      senderPubkeyHex: peerPubkey,
+    );
+
+    final messages = notifier.state.messages[groupId] ?? const <ChatMessage>[];
+    expect(messages, hasLength(1));
+    expect(messages.single.senderPubkeyHex, peerPubkey);
+    expect(messages.single.isIncoming, isTrue);
+  });
 }

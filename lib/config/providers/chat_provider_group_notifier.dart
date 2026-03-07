@@ -5,12 +5,14 @@ class _PendingGroupEvent {
     required this.rumorId,
     required this.rumorJson,
     required this.receivedAtMs,
+    required this.senderPubkeyHex,
     this.eventId,
   });
 
   final String rumorId;
   final String rumorJson;
   final int receivedAtMs;
+  final String senderPubkeyHex;
   final String? eventId;
 }
 
@@ -82,6 +84,17 @@ class GroupNotifier extends StateNotifier<GroupState> {
   }
 
   String? _myPubkeyHex() => _sessionManagerService.ownerPubkeyHex;
+
+  String _effectiveSenderPubkeyHex(
+    String? senderPubkeyHex,
+    String rumorPubkey,
+  ) {
+    final override = senderPubkeyHex?.trim().toLowerCase();
+    if (override != null && override.isNotEmpty) {
+      return override;
+    }
+    return rumorPubkey.trim().toLowerCase();
+  }
 
   List<String> _normalizedHexList(List<String> input) {
     final values = <String>{};
@@ -789,13 +802,26 @@ class GroupNotifier extends StateNotifier<GroupState> {
   Future<void> handleIncomingGroupRumorJson(
     String rumorJson, {
     String? eventId,
+    String? senderPubkeyHex,
   }) async {
     final rumor = NostrRumor.tryParse(rumorJson);
     if (rumor == null) return;
-    await _handleGroupRumor(rumor, eventId: eventId);
+    await _handleGroupRumor(
+      rumor,
+      eventId: eventId,
+      senderPubkeyHex: senderPubkeyHex,
+    );
   }
 
-  Future<void> _handleGroupRumor(NostrRumor rumor, {String? eventId}) async {
+  Future<void> _handleGroupRumor(
+    NostrRumor rumor, {
+    String? eventId,
+    String? senderPubkeyHex,
+  }) async {
+    final effectiveSenderPubkeyHex = _effectiveSenderPubkeyHex(
+      senderPubkeyHex,
+      rumor.pubkey,
+    );
     final groupTag = getFirstTagValue(rumor.tags, kGroupTagName);
     final groupId =
         groupTag ??
@@ -805,7 +831,11 @@ class GroupNotifier extends StateNotifier<GroupState> {
     if (groupId == null || groupId.isEmpty) return;
 
     if (rumor.kind == _kGroupMetadataKind) {
-      await _handleGroupMetadata(rumor, groupId);
+      await _handleGroupMetadata(
+        rumor,
+        groupId,
+        senderPubkeyHex: effectiveSenderPubkeyHex,
+      );
       return;
     }
 
@@ -816,6 +846,7 @@ class GroupNotifier extends StateNotifier<GroupState> {
         groupId,
         rumorId: rumor.id,
         rumorJson: jsonEncode(_rumorToMap(rumor)),
+        senderPubkeyHex: effectiveSenderPubkeyHex,
         eventId: eventId,
       );
       return;
@@ -834,22 +865,40 @@ class GroupNotifier extends StateNotifier<GroupState> {
     }
 
     if (rumor.kind == _kTypingKind) {
-      _handleGroupTyping(rumor, groupId);
+      _handleGroupTyping(
+        rumor,
+        groupId,
+        senderPubkeyHex: effectiveSenderPubkeyHex,
+      );
       return;
     }
 
     if (rumor.kind == _kReactionKind) {
-      await _handleGroupReaction(rumor, groupId);
+      await _handleGroupReaction(
+        rumor,
+        groupId,
+        senderPubkeyHex: effectiveSenderPubkeyHex,
+      );
       return;
     }
 
     if (rumor.kind == _kChatMessageKind) {
-      await _handleGroupMessage(rumor, groupId, group, eventId: eventId);
+      await _handleGroupMessage(
+        rumor,
+        groupId,
+        group,
+        eventId: eventId,
+        senderPubkeyHex: effectiveSenderPubkeyHex,
+      );
       return;
     }
   }
 
-  Future<void> _handleGroupMetadata(NostrRumor rumor, String groupId) async {
+  Future<void> _handleGroupMetadata(
+    NostrRumor rumor,
+    String groupId, {
+    required String senderPubkeyHex,
+  }) async {
     final metadata = parseGroupMetadata(rumor.content);
     if (metadata == null) return;
 
@@ -861,7 +910,7 @@ class GroupNotifier extends StateNotifier<GroupState> {
       final result = validateMetadataUpdate(
         existing: existing,
         metadata: metadata,
-        senderPubkeyHex: rumor.pubkey,
+        senderPubkeyHex: senderPubkeyHex,
         myPubkeyHex: myPubkeyHex,
       );
       if (result == MetadataValidation.reject) return;
@@ -886,7 +935,7 @@ class GroupNotifier extends StateNotifier<GroupState> {
 
     if (!validateMetadataCreation(
       metadata: metadata,
-      senderPubkeyHex: rumor.pubkey,
+      senderPubkeyHex: senderPubkeyHex,
       myPubkeyHex: myPubkeyHex,
     )) {
       return;
@@ -921,9 +970,10 @@ class GroupNotifier extends StateNotifier<GroupState> {
     String groupId,
     ChatGroup group, {
     String? eventId,
+    required String senderPubkeyHex,
   }) async {
     final myPubkeyHex = _myPubkeyHex();
-    final isMine = myPubkeyHex != null && rumor.pubkey == myPubkeyHex;
+    final isMine = myPubkeyHex != null && senderPubkeyHex == myPubkeyHex;
 
     // Persist first to avoid duplicates across UI rebuilds.
     if (await _groupMessageDatasource.messageExists(rumor.id)) return;
@@ -946,7 +996,7 @@ class GroupNotifier extends StateNotifier<GroupState> {
       eventId: eventId,
       rumorId: rumor.id,
       replyToId: replyToId,
-      senderPubkeyHex: rumor.pubkey,
+      senderPubkeyHex: senderPubkeyHex,
     );
 
     if (!isMine) {
@@ -1001,22 +1051,30 @@ class GroupNotifier extends StateNotifier<GroupState> {
     }
   }
 
-  Future<void> _handleGroupReaction(NostrRumor rumor, String groupId) async {
+  Future<void> _handleGroupReaction(
+    NostrRumor rumor,
+    String groupId, {
+    required String senderPubkeyHex,
+  }) async {
     final messageId = getFirstTagValue(rumor.tags, 'e');
     if (messageId == null || messageId.isEmpty) return;
     await _applyGroupReaction(
       groupId,
       messageId,
       rumor.content,
-      rumor.pubkey,
+      senderPubkeyHex,
       notifyIncoming: true,
       reactionTimestamp: rumorTimestamp(rumor),
     );
   }
 
-  void _handleGroupTyping(NostrRumor rumor, String groupId) {
+  void _handleGroupTyping(
+    NostrRumor rumor,
+    String groupId, {
+    required String senderPubkeyHex,
+  }) {
     final myPubkeyHex = _myPubkeyHex();
-    if (myPubkeyHex != null && rumor.pubkey == myPubkeyHex) return;
+    if (myPubkeyHex != null && senderPubkeyHex == myPubkeyHex) return;
 
     final expiresAtSeconds = getExpirationTimestampSeconds(rumor.tags);
     if (isTypingStopRumor(rumor, expiresAtSeconds: expiresAtSeconds)) {
@@ -1109,6 +1167,7 @@ class GroupNotifier extends StateNotifier<GroupState> {
     String groupId, {
     required String rumorId,
     required String rumorJson,
+    required String senderPubkeyHex,
     String? eventId,
   }) {
     final list = _pendingByGroupId.putIfAbsent(
@@ -1122,6 +1181,7 @@ class GroupNotifier extends StateNotifier<GroupState> {
         rumorId: rumorId,
         rumorJson: rumorJson,
         receivedAtMs: DateTime.now().millisecondsSinceEpoch,
+        senderPubkeyHex: senderPubkeyHex,
         eventId: eventId,
       ),
     );
@@ -1136,7 +1196,11 @@ class GroupNotifier extends StateNotifier<GroupState> {
       if (now - p.receivedAtMs > _kPendingMaxAge.inMilliseconds) continue;
       final rumor = NostrRumor.tryParse(p.rumorJson);
       if (rumor == null) continue;
-      await _handleGroupRumor(rumor, eventId: p.eventId);
+      await _handleGroupRumor(
+        rumor,
+        eventId: p.eventId,
+        senderPubkeyHex: p.senderPubkeyHex,
+      );
     }
   }
 

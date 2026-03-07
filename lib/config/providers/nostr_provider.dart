@@ -259,11 +259,16 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
               fromOwnerPubkeyHex: message.senderPubkeyHex,
             );
             for (final event in decrypted) {
+              final senderPubkeyHex =
+                  event.senderOwnerPubkeyHex?.trim().isNotEmpty ?? false
+                  ? event.senderOwnerPubkeyHex
+                  : message.senderPubkeyHex;
               await ref
                   .read(groupStateProvider.notifier)
                   .handleIncomingGroupRumorJson(
                     event.innerEventJson,
                     eventId: event.outerEventId,
+                    senderPubkeyHex: senderPubkeyHex,
                   );
             }
           } catch (_) {}
@@ -277,6 +282,7 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
               .handleIncomingGroupRumorJson(
                 message.content,
                 eventId: message.eventId,
+                senderPubkeyHex: message.senderPubkeyHex,
               );
           return;
         }
