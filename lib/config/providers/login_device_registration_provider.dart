@@ -6,6 +6,7 @@ import 'package:nostr/nostr.dart' as nostr;
 
 import '../../core/ffi/ndr_ffi.dart';
 import '../../core/services/nostr_service.dart';
+import '../../core/utils/app_keys_event_fetch.dart';
 import '../../features/auth/domain/models/identity.dart';
 import 'nostr_provider.dart';
 
@@ -136,8 +137,10 @@ class LoginDeviceRegistrationServiceImpl
   }
 
   Future<Map<String, int>> _loadLatestDevicesMap(String ownerPubkeyHex) async {
-    final latest = await _fetchLatestAppKeysEvent(
+    final latest = await fetchLatestAppKeysEvent(
+      _nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
+      subscriptionLabel: 'appkeys-login',
     );
     if (latest == null) return <String, int>{};
 
@@ -149,37 +152,6 @@ class LoginDeviceRegistrationServiceImpl
       merged[key] = device.createdAt;
     }
     return merged;
-  }
-
-  Future<NostrEvent?> _fetchLatestAppKeysEvent({
-    required String ownerPubkeyHex,
-    Duration timeout = const Duration(seconds: 2),
-  }) async {
-    final subid = 'appkeys-login-${DateTime.now().microsecondsSinceEpoch}';
-
-    NostrEvent? best;
-    final sub = _nostrService.events.listen((event) {
-      if (event.subscriptionId != subid) return;
-      if (event.kind != 30078) return;
-      if (_normalizeHex(event.pubkey) != ownerPubkeyHex) return;
-      if (event.getTagValue('d') != 'double-ratchet/app-keys') return;
-
-      if (best == null || event.createdAt > best!.createdAt) {
-        best = event;
-      }
-    });
-
-    try {
-      _nostrService.subscribeWithId(
-        subid,
-        NostrFilter(kinds: const [30078], authors: [ownerPubkeyHex], limit: 50),
-      );
-      await Future.delayed(timeout);
-      return best;
-    } finally {
-      await sub.cancel();
-      _nostrService.closeSubscription(subid);
-    }
   }
 
   List<FfiDeviceEntry> _sortedDevices(

@@ -9,6 +9,7 @@ import '../../core/ffi/ndr_ffi.dart';
 import '../../core/services/error_service.dart';
 import '../../core/services/logger_service.dart';
 import '../../core/services/nostr_service.dart';
+import '../../core/utils/app_keys_event_fetch.dart';
 import '../../core/utils/invite_url.dart';
 import '../../features/chat/domain/models/session.dart';
 import '../../features/invite/data/datasources/invite_local_datasource.dart';
@@ -643,33 +644,12 @@ class InviteNotifier extends StateNotifier<InviteState> {
     required String ownerPubkeyHex,
     Duration timeout = const Duration(seconds: 2),
   }) async {
-    final subid = 'appkeys-fetch-${DateTime.now().microsecondsSinceEpoch}';
-
-    NostrEvent? best;
-    final sub = nostrService.events.listen((event) {
-      if (event.subscriptionId != subid) return;
-      if (event.kind != 30078) return;
-      if (event.pubkey != ownerPubkeyHex) return;
-      final d = event.getTagValue('d');
-      if (d != 'double-ratchet/app-keys') return;
-
-      if (best == null || event.createdAt > best!.createdAt) {
-        best = event;
-      }
-    });
-
-    try {
-      nostrService.subscribeWithId(
-        subid,
-        NostrFilter(kinds: const [30078], authors: [ownerPubkeyHex], limit: 50),
-      );
-
-      await Future.delayed(timeout);
-      return best;
-    } finally {
-      await sub.cancel();
-      nostrService.closeSubscription(subid);
-    }
+    return fetchLatestAppKeysEvent(
+      nostrService,
+      ownerPubkeyHex: ownerPubkeyHex,
+      timeout: timeout,
+      subscriptionLabel: 'appkeys-fetch',
+    );
   }
 }
 

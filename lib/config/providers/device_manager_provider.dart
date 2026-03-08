@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/ffi/ndr_ffi.dart';
 import '../../core/services/error_service.dart';
 import '../../core/services/nostr_service.dart';
+import '../../core/utils/app_keys_event_fetch.dart';
 import '../../features/auth/domain/repositories/auth_repository.dart';
 import 'auth_provider.dart';
 import 'nostr_provider.dart';
@@ -205,8 +206,10 @@ class DeviceManagerNotifier extends StateNotifier<DeviceManagerState> {
             device.createdAt,
     };
 
-    final latest = await _fetchLatestAppKeysEvent(
+    final latest = await fetchLatestAppKeysEvent(
+      _nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
+      subscriptionLabel: 'appkeys-settings',
     );
     if (latest == null) return fromState;
 
@@ -239,37 +242,6 @@ class DeviceManagerNotifier extends StateNotifier<DeviceManagerState> {
           .toList(),
     );
     await _nostrService.publishEvent(eventJson);
-  }
-
-  Future<NostrEvent?> _fetchLatestAppKeysEvent({
-    required String ownerPubkeyHex,
-    Duration timeout = const Duration(seconds: 2),
-  }) async {
-    final subid = 'appkeys-settings-${DateTime.now().microsecondsSinceEpoch}';
-
-    NostrEvent? best;
-    final sub = _nostrService.events.listen((event) {
-      if (event.subscriptionId != subid) return;
-      if (event.kind != 30078) return;
-      if (_normalizeHex(event.pubkey) != ownerPubkeyHex) return;
-      if (event.getTagValue('d') != 'double-ratchet/app-keys') return;
-
-      if (best == null || event.createdAt > best!.createdAt) {
-        best = event;
-      }
-    });
-
-    try {
-      _nostrService.subscribeWithId(
-        subid,
-        NostrFilter(kinds: const [30078], authors: [ownerPubkeyHex], limit: 50),
-      );
-      await Future.delayed(timeout);
-      return best;
-    } finally {
-      await sub.cancel();
-      _nostrService.closeSubscription(subid);
-    }
   }
 
   List<FfiDeviceEntry> _sortedDevices(
