@@ -10,6 +10,7 @@ import '../../core/services/error_service.dart';
 import '../../core/services/logger_service.dart';
 import '../../core/services/nostr_service.dart';
 import '../../core/utils/app_keys_event_fetch.dart';
+import '../../core/utils/device_invite_event_fetch.dart';
 import '../../core/utils/invite_url.dart';
 import '../../features/chat/domain/models/session.dart';
 import '../../features/invite/data/datasources/invite_local_datasource.dart';
@@ -245,36 +246,99 @@ class InviteNotifier extends StateNotifier<InviteState> {
         inviteUrl: url,
         ownerPubkeyHintHex: ownerHintPubkeyHex,
       );
-      final inviterOwnerPubkey = acceptResult.ownerPubkeyHex;
-
-      // Store sessions keyed by peer owner pubkey for stable routing/deduping.
-      final sessionDatasource = _ref.read(sessionDatasourceProvider);
-      final existing = await sessionDatasource.getSessionByRecipient(
-        inviterOwnerPubkey,
+      final sessionId = await _upsertAcceptedSession(
+        acceptResult.ownerPubkeyHex,
       );
-      final sessionId = existing?.id ?? inviterOwnerPubkey;
-
-      // Create session in chat provider
-      final sessionNotifier = _ref.read(sessionStateProvider.notifier);
-      final session = ChatSession(
-        id: sessionId,
-        recipientPubkeyHex: inviterOwnerPubkey,
-        recipientName: existing?.recipientName,
-        createdAt: existing?.createdAt ?? DateTime.now(),
-        lastMessageAt: existing?.lastMessageAt,
-        lastMessagePreview: existing?.lastMessagePreview,
-        unreadCount: existing?.unreadCount ?? 0,
-        inviteId: existing?.inviteId,
-        isInitiator: existing?.isInitiator ?? false,
-      );
-
-      await sessionNotifier.addSession(session);
-
-      // Refresh subscription to listen for messages from the new session
-      await sessionManager.refreshSubscription();
 
       state = state.copyWith(isAccepting: false);
       return sessionId;
+    } catch (e, st) {
+      final appError = AppError.from(e, st);
+      state = state.copyWith(isAccepting: false, error: appError.message);
+      return null;
+    }
+  }
+
+  /// Accept a published device invite for a bare owner pubkey / npub link.
+  ///
+  /// Returns the established session id when a public invite exists and can be
+  /// accepted, otherwise `null` so callers can fall back to a placeholder row.
+  Future<String?> acceptPublicInviteForPubkey(String ownerPubkeyHex) async {
+    state = state.copyWith(isAccepting: true, error: null);
+    try {
+      final authState = _ref.read(authStateProvider);
+      if (!authState.isAuthenticated || authState.pubkeyHex == null) {
+        throw Exception('Not authenticated');
+      }
+
+      final normalizedOwnerPubkeyHex = _normalizeDevicePubkeyHex(
+        ownerPubkeyHex,
+      );
+      if (normalizedOwnerPubkeyHex == null) {
+        throw Exception('Invalid public key');
+      }
+
+      final nostrService = _ref.read(nostrServiceProvider);
+      final sessionManager = _ref.read(sessionManagerServiceProvider);
+      final candidateInviteAuthors = <String>{normalizedOwnerPubkeyHex};
+
+      final deadline = DateTime.now().add(const Duration(seconds: 6));
+      while (DateTime.now().isBefore(deadline)) {
+        final remaining = deadline.difference(DateTime.now());
+        final attemptTimeout = remaining > const Duration(milliseconds: 900)
+            ? const Duration(milliseconds: 900)
+            : remaining;
+
+        final latestAppKeys = await _fetchLatestAppKeysEvent(
+          nostrService,
+          ownerPubkeyHex: normalizedOwnerPubkeyHex,
+          timeout: attemptTimeout,
+        );
+        if (latestAppKeys != null) {
+          await sessionManager.processEventJson(
+            jsonEncode(latestAppKeys.toJson()),
+          );
+          final devices = await NdrFfi.parseAppKeysEvent(
+            jsonEncode(latestAppKeys.toJson()),
+          );
+          for (final device in devices) {
+            final pubkeyHex = _normalizeDevicePubkeyHex(
+              device.identityPubkeyHex,
+            );
+            if (pubkeyHex != null) {
+              candidateInviteAuthors.add(pubkeyHex);
+            }
+          }
+        }
+
+        final inviteEvents = await fetchLatestDeviceInviteEvents(
+          nostrService,
+          devicePubkeysHex: candidateInviteAuthors,
+          timeout: attemptTimeout,
+          subscriptionLabel: 'public-invite-fetch',
+        );
+
+        for (final inviteEvent in inviteEvents) {
+          try {
+            final acceptResult = await sessionManager.acceptInviteFromEventJson(
+              eventJson: jsonEncode(inviteEvent.toJson()),
+              ownerPubkeyHintHex: normalizedOwnerPubkeyHex,
+            );
+            final sessionId = await _upsertAcceptedSession(
+              acceptResult.ownerPubkeyHex,
+            );
+            state = state.copyWith(isAccepting: false);
+            return sessionId;
+          } catch (e) {
+            // Ignore stale/unauthorized candidate invites and try the next device.
+          }
+        }
+
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
+
+      state = state.copyWith(isAccepting: false, error: null);
+      return null;
     } catch (e, st) {
       final appError = AppError.from(e, st);
       state = state.copyWith(isAccepting: false, error: appError.message);
@@ -656,6 +720,38 @@ class InviteNotifier extends StateNotifier<InviteState> {
       timeout: timeout,
       subscriptionLabel: 'appkeys-fetch',
     );
+  }
+
+  Future<String> _upsertAcceptedSession(String recipientOwnerPubkeyHex) async {
+    final normalizedRecipient = _normalizeDevicePubkeyHex(
+      recipientOwnerPubkeyHex,
+    );
+    if (normalizedRecipient == null) {
+      throw Exception('Invalid public key');
+    }
+
+    final sessionDatasource = _ref.read(sessionDatasourceProvider);
+    final existing = await sessionDatasource.getSessionByRecipient(
+      normalizedRecipient,
+    );
+    final sessionId = existing?.id ?? normalizedRecipient;
+
+    final sessionNotifier = _ref.read(sessionStateProvider.notifier);
+    final session = ChatSession(
+      id: sessionId,
+      recipientPubkeyHex: normalizedRecipient,
+      recipientName: existing?.recipientName,
+      createdAt: existing?.createdAt ?? DateTime.now(),
+      lastMessageAt: existing?.lastMessageAt,
+      lastMessagePreview: existing?.lastMessagePreview,
+      unreadCount: existing?.unreadCount ?? 0,
+      inviteId: existing?.inviteId,
+      isInitiator: existing?.isInitiator ?? false,
+    );
+
+    await sessionNotifier.addSession(session);
+    await _ref.read(sessionManagerServiceProvider).refreshSubscription();
+    return sessionId;
   }
 }
 

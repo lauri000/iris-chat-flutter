@@ -393,6 +393,17 @@ class SessionManagerService {
     });
   }
 
+  Future<void> processEventJson(String eventJson) async {
+    await _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      await manager.processEvent(eventJson);
+      await _drainEventsUnlocked();
+    });
+  }
+
   Future<void> _initManager() async {
     final identity = await _authRepository.getCurrentIdentity();
     final devicePrivkeyHex = await _authRepository.getPrivateKey();

@@ -70,11 +70,20 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
 
       setState(() => _isJoining = true);
       try {
+        final acceptedSessionId = await ref
+            .read(inviteStateProvider.notifier)
+            .acceptPublicInviteForPubkey(pubkeyHex);
+        if (!mounted) return;
+        _pasteController.clear();
+        if (acceptedSessionId != null && acceptedSessionId.isNotEmpty) {
+          context.go('/chats/$acceptedSessionId');
+          return;
+        }
+
         final session = await ref
             .read(sessionStateProvider.notifier)
             .ensureSessionForRecipient(pubkeyHex);
         if (!mounted) return;
-        _pasteController.clear();
         context.go('/chats/${session.id}');
       } catch (e) {
         if (!mounted) return;

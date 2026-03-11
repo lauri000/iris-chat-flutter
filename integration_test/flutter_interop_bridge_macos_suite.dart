@@ -719,6 +719,32 @@ Future<void> _handleCommand({
           Duration(milliseconds: timeoutMs),
         );
 
+      case 'ensure_session_for_recipient':
+        final recipientPubkeyHex =
+            payload['recipientPubkeyHex']?.toString() ?? '';
+        if (recipientPubkeyHex.isEmpty) {
+          throw ArgumentError(
+            'ensure_session_for_recipient requires recipientPubkeyHex',
+          );
+        }
+
+        final inviteSessionId = await container
+            .read(inviteStateProvider.notifier)
+            .acceptPublicInviteForPubkey(recipientPubkeyHex);
+        if (inviteSessionId != null && inviteSessionId.isNotEmpty) {
+          await ok({
+            'sessionId': inviteSessionId,
+            'acceptedViaPublicInvite': true,
+          });
+          return;
+        }
+
+        final session = await container
+            .read(sessionStateProvider.notifier)
+            .ensureSessionForRecipient(recipientPubkeyHex);
+        await ok({'sessionId': session.id, 'acceptedViaPublicInvite': false});
+        return;
+
       case 'get_connection_status':
         final nostrService = container.read(nostrServiceProvider);
         await ok({
@@ -1240,11 +1266,14 @@ void main() {
       await container.read(sessionStateProvider.notifier).loadSessions();
       await container.read(inviteStateProvider.notifier).loadInvites();
 
-      final pubkeyHex = container.read(authStateProvider).pubkeyHex;
+      final authStateSnapshot = container.read(authStateProvider);
+      final pubkeyHex = authStateSnapshot.pubkeyHex;
+      final devicePubkeyHex = authStateSnapshot.devicePubkeyHex;
       await _emitEvent(eventsFile, {
         'type': 'ready',
         'data': {
           'pubkeyHex': pubkeyHex,
+          'devicePubkeyHex': devicePubkeyHex,
           'relayUrl': effectiveRelayUrls.first,
           'relayUrls': effectiveRelayUrls,
         },
