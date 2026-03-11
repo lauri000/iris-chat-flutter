@@ -163,7 +163,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     await ref
         .read(authStateProvider.notifier)
-        .login(key, devicePrivkeyHex: preview?.currentDevicePrivkeyHex);
+        .login(
+          key,
+          devicePrivkeyHex: shouldRegisterDevice
+              ? preview?.currentDevicePrivkeyHex
+              : null,
+        );
     final state = ref.read(authStateProvider);
     if (!state.isAuthenticated) return;
 

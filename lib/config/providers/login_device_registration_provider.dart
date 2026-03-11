@@ -73,8 +73,13 @@ class LoginDeviceRegistrationServiceImpl
     final ownerPubkeyHex = (await NdrFfi.derivePublicKey(
       ownerPrivkeyHex,
     )).trim().toLowerCase();
-    final currentDevicePrivkeyHex = ownerPrivkeyHex;
-    final currentDevicePubkeyHex = ownerPubkeyHex;
+    final deviceKeypair = await NdrFfi.generateKeypair();
+    final currentDevicePrivkeyHex = deviceKeypair.privateKeyHex
+        .trim()
+        .toLowerCase();
+    final currentDevicePubkeyHex = deviceKeypair.publicKeyHex
+        .trim()
+        .toLowerCase();
 
     Map<String, int> existingMap = <String, int>{};
     String? loadError;

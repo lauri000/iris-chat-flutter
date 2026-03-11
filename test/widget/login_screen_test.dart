@@ -39,6 +39,11 @@ class _TestLoginInviteNotifier extends InviteNotifier {
   }
 }
 
+const generatedDevicePrivkeyHex =
+    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const generatedDevicePubkeyHex =
+    'b1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+
 void main() {
   late MockAuthRepository mockAuthRepo;
   late MockDatabaseService mockDatabaseService;
@@ -68,11 +73,14 @@ void main() {
       (_) async => const LoginDeviceRegistrationPreview(
         ownerPubkeyHex: testPubkeyHex,
         ownerPrivkeyHex: testPrivkeyHex,
-        currentDevicePrivkeyHex: testPrivkeyHex,
-        currentDevicePubkeyHex: testPubkeyHex,
+        currentDevicePrivkeyHex: generatedDevicePrivkeyHex,
+        currentDevicePubkeyHex: generatedDevicePubkeyHex,
         existingDevices: [],
         devicesIfRegistered: [
-          FfiDeviceEntry(identityPubkeyHex: testPubkeyHex, createdAt: 1),
+          FfiDeviceEntry(
+            identityPubkeyHex: generatedDevicePubkeyHex,
+            createdAt: 1,
+          ),
         ],
         deviceListLoaded: true,
       ),
@@ -485,10 +493,7 @@ void main() {
         await tester.pumpAndSettle();
 
         verify(
-          () => mockAuthRepo.login(
-            'nsec1dummykey',
-            devicePrivkeyHex: testPrivkeyHex,
-          ),
+          () => mockAuthRepo.login('nsec1dummykey', devicePrivkeyHex: null),
         ).called(1);
         verifyNever(
           () => mockLoginDeviceRegistrationService.publishDeviceList(
@@ -556,16 +561,26 @@ void main() {
         verify(
           () => mockAuthRepo.login(
             'nsec1dummykey',
-            devicePrivkeyHex: testPrivkeyHex,
+            devicePrivkeyHex: generatedDevicePrivkeyHex,
           ),
         ).called(1);
-        verify(
-          () => mockLoginDeviceRegistrationService.publishDeviceList(
-            ownerPubkeyHex: testPubkeyHex,
-            ownerPrivkeyHex: testPrivkeyHex,
-            devices: any(named: 'devices'),
-          ),
-        ).called(1);
+        final capturedDevices =
+            verify(
+                  () => mockLoginDeviceRegistrationService.publishDeviceList(
+                    ownerPubkeyHex: testPubkeyHex,
+                    ownerPrivkeyHex: testPrivkeyHex,
+                    devices: captureAny(named: 'devices'),
+                  ),
+                ).captured.single
+                as List<FfiDeviceEntry>;
+        expect(
+          capturedDevices.map((d) => d.identityPubkeyHex),
+          contains(generatedDevicePubkeyHex),
+        );
+        expect(
+          capturedDevices.map((d) => d.identityPubkeyHex),
+          isNot(contains(testPubkeyHex)),
+        );
       });
     });
   });
