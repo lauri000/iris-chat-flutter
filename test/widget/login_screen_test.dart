@@ -6,6 +6,7 @@ import 'package:iris_chat/config/providers/auth_provider.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/config/providers/invite_provider.dart';
 import 'package:iris_chat/config/providers/login_device_registration_provider.dart';
+import 'package:iris_chat/core/ffi/models/ffi_device_entry.dart';
 import 'package:iris_chat/core/services/database_service.dart';
 import 'package:iris_chat/features/auth/domain/models/identity.dart';
 import 'package:iris_chat/features/auth/domain/repositories/auth_repository.dart';
@@ -40,6 +41,44 @@ class _TestLoginInviteNotifier extends InviteNotifier {
 
 const generatedDevicePubkeyHex =
     'b1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+const generatedDevicePrivkeyHex =
+    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const existingDevicePubkeyHex =
+    'c1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+
+LoginDeviceRegistrationPreview _buildPreview({
+  List<FfiDeviceEntry>? existingDevices,
+  bool deviceListLoaded = true,
+  String? deviceListLoadError,
+}) {
+  final existing =
+      existingDevices ??
+      const [
+        FfiDeviceEntry(
+          identityPubkeyHex: existingDevicePubkeyHex,
+          createdAt: 1700000000,
+        ),
+      ];
+
+  return LoginDeviceRegistrationPreview(
+    ownerPubkeyHex: testPubkeyHex,
+    ownerPrivkeyHex: testPrivkeyHex,
+    currentDevicePrivkeyHex: generatedDevicePrivkeyHex,
+    currentDevicePubkeyHex: generatedDevicePubkeyHex,
+    existingDevices: existing,
+    devicesIfRegistered: [
+      ...existing,
+      const FfiDeviceEntry(
+        identityPubkeyHex: generatedDevicePubkeyHex,
+        createdAt: 1700000001,
+      ),
+    ],
+    deviceListLoaded: deviceListLoaded,
+    deviceListLoadError: deviceListLoadError,
+  );
+}
+
+String _validNsec() => nostr.Nip19.encodePrivkey(testPrivkeyHex) as String;
 
 void main() {
   late MockAuthRepository mockAuthRepo;
@@ -86,6 +125,11 @@ void main() {
         devicePubkeyHex: any(named: 'devicePubkeyHex'),
       ),
     ).thenAnswer((_) async {});
+    when(
+      () => mockLoginDeviceRegistrationService.buildPreviewFromPrivateKeyNsec(
+        any(),
+      ),
+    ).thenAnswer((_) async => _buildPreview());
   });
 
   Widget buildLoginScreen({
@@ -429,9 +473,11 @@ void main() {
     });
 
     group('nsec login', () {
-      testWidgets('login does not prompt for device registration', (
+      testWidgets('login shows device registration prompt before chats', (
         tester,
       ) async {
+        final nsec = _validNsec();
+
         when(
           () => mockAuthRepo.login(
             any(),
@@ -445,17 +491,34 @@ void main() {
         await tester.tap(find.text('Import Existing Key'));
         await tester.pumpAndSettle();
 
-        await tester.enterText(find.byType(TextField), 'nsec1dummykey');
+        await tester.enterText(find.byType(TextField), nsec);
         await tester.tap(find.text('Login'));
         await tester.pumpAndSettle();
 
-        expect(find.text('Register This Device?'), findsNothing);
-        expect(find.text('Chats Screen'), findsOneWidget);
+        expect(find.text('Register This Device?'), findsWidgets);
+        expect(find.text('Previously active devices'), findsWidgets);
+        expect(
+          find.text('Active devices after registering this one'),
+          findsWidgets,
+        );
+        expect(find.text('Chats Screen'), findsNothing);
+        verify(
+          () => mockLoginDeviceRegistrationService
+              .buildPreviewFromPrivateKeyNsec(nsec),
+        ).called(1);
+        verify(
+          () => mockAuthRepo.login(
+            nsec,
+            devicePrivkeyHex: generatedDevicePrivkeyHex,
+          ),
+        ).called(1);
       });
 
-      testWidgets('login does not register the generated device key', (
+      testWidgets('registering from prompt publishes generated device key', (
         tester,
       ) async {
+        final nsec = _validNsec();
+
         when(
           () => mockAuthRepo.login(
             any(),
@@ -469,24 +532,32 @@ void main() {
         await tester.tap(find.text('Import Existing Key'));
         await tester.pumpAndSettle();
 
-        await tester.enterText(find.byType(TextField), 'nsec1dummykey');
+        await tester.enterText(find.byType(TextField), nsec);
         await tester.tap(find.text('Login'));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.widgetWithText(FilledButton, 'Register Device').last,
+        );
         await tester.pumpAndSettle();
 
         verify(
-          () => mockAuthRepo.login('nsec1dummykey', devicePrivkeyHex: null),
+          () => mockAuthRepo.login(
+            nsec,
+            devicePrivkeyHex: generatedDevicePrivkeyHex,
+          ),
         ).called(1);
-        verifyNever(
+        verify(
           () => mockLoginDeviceRegistrationService.registerDevice(
             ownerPubkeyHex: testPubkeyHex,
             ownerPrivkeyHex: testPrivkeyHex,
             devicePubkeyHex: generatedDevicePubkeyHex,
           ),
-        );
+        ).called(1);
+        expect(find.text('Chats Screen'), findsOneWidget);
       });
 
       testWidgets(
-        'pasting valid nsec auto-starts login without tapping button',
+        'pasting valid nsec auto-starts login and opens registration prompt',
         (tester) async {
           when(
             () => mockAuthRepo.login(
@@ -504,56 +575,87 @@ void main() {
           await tester.pumpAndSettle();
 
           await tester.enterText(find.byType(TextField), nsec);
+          await tester.pump(const Duration(milliseconds: 200));
           await tester.pumpAndSettle();
 
-          expect(find.text('Register This Device?'), findsNothing);
-          expect(find.text('Chats Screen'), findsOneWidget);
+          expect(find.text('Register This Device?'), findsWidgets);
+          expect(find.text('Chats Screen'), findsNothing);
           verify(
-            () => mockAuthRepo.login(nsec, devicePrivkeyHex: null),
-          ).called(1);
-          verifyNever(
-            () => mockLoginDeviceRegistrationService.registerDevice(
-              ownerPubkeyHex: testPubkeyHex,
-              ownerPrivkeyHex: testPrivkeyHex,
-              devicePubkeyHex: generatedDevicePubkeyHex,
-            ),
-          );
-        },
-      );
-
-      testWidgets(
-        'login succeeds without calling device registration',
-        (tester) async {
-          when(
             () => mockAuthRepo.login(
-              any(),
-              devicePrivkeyHex: any(named: 'devicePrivkeyHex'),
+              nsec,
+              devicePrivkeyHex: generatedDevicePrivkeyHex,
             ),
-          ).thenAnswer((_) async => const Identity(pubkeyHex: testPubkeyHex));
-
-          await tester.pumpWidget(buildLoginScreenRouter());
-          await tester.pumpAndSettle();
-
-          await tester.tap(find.text('Import Existing Key'));
-          await tester.pumpAndSettle();
-
-          await tester.enterText(find.byType(TextField), 'nsec1dummykey');
-          await tester.tap(find.text('Login'));
-          await tester.pumpAndSettle();
-
-          verify(
-            () => mockAuthRepo.login('nsec1dummykey', devicePrivkeyHex: null),
           ).called(1);
-          verifyNever(
-            () => mockLoginDeviceRegistrationService.registerDevice(
-              ownerPubkeyHex: any(named: 'ownerPubkeyHex'),
-              ownerPrivkeyHex: any(named: 'ownerPrivkeyHex'),
-              devicePubkeyHex: any(named: 'devicePubkeyHex'),
-            ),
-          );
-          expect(find.text('Chats Screen'), findsOneWidget);
         },
       );
+
+      testWidgets('skip keeps login successful without registering device', (
+        tester,
+      ) async {
+        final nsec = _validNsec();
+
+        when(
+          () => mockAuthRepo.login(
+            any(),
+            devicePrivkeyHex: any(named: 'devicePrivkeyHex'),
+          ),
+        ).thenAnswer((_) async => const Identity(pubkeyHex: testPubkeyHex));
+
+        await tester.pumpWidget(buildLoginScreenRouter());
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Import Existing Key'));
+        await tester.pumpAndSettle();
+
+        await tester.enterText(find.byType(TextField), nsec);
+        await tester.tap(find.text('Login'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(TextButton, 'Skip for now').last);
+        await tester.pumpAndSettle();
+
+        verify(
+          () => mockAuthRepo.login(
+            nsec,
+            devicePrivkeyHex: generatedDevicePrivkeyHex,
+          ),
+        ).called(1);
+        verifyNever(
+          () => mockLoginDeviceRegistrationService.registerDevice(
+            ownerPubkeyHex: any(named: 'ownerPubkeyHex'),
+            ownerPrivkeyHex: any(named: 'ownerPrivkeyHex'),
+            devicePubkeyHex: any(named: 'devicePubkeyHex'),
+          ),
+        );
+        expect(find.text('Chats Screen'), findsOneWidget);
+      });
+
+      testWidgets('dialog warns when no previous devices were found', (
+        tester,
+      ) async {
+        final nsec = _validNsec();
+
+        when(
+          () => mockLoginDeviceRegistrationService
+              .buildPreviewFromPrivateKeyNsec(any()),
+        ).thenAnswer((_) async => _buildPreview(existingDevices: const []));
+
+        await tester.pumpWidget(buildLoginScreenRouter());
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Import Existing Key'));
+        await tester.pumpAndSettle();
+
+        await tester.enterText(find.byType(TextField), nsec);
+        await tester.tap(find.text('Login'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text(
+            'No previous devices were found. Registering now will publish this device as the first active device for this account.',
+          ),
+          findsWidgets,
+        );
+      });
     });
   });
 }
