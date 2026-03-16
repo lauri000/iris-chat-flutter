@@ -23,7 +23,6 @@ import '../../../../config/providers/startup_launch_provider.dart';
 import '../../../../core/services/imgproxy_service.dart';
 import '../../../../core/services/nostr_relay_settings_service.dart';
 import '../../../../core/services/profile_service.dart';
-import '../../../../core/services/secure_storage_service.dart';
 import '../../../../shared/utils/formatters.dart';
 import '../../../../shared/widgets/image_viewer_modal.dart';
 import '../../../chat/presentation/widgets/chats_back_button.dart';
@@ -1204,6 +1203,7 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
+    final container = ProviderScope.containerOf(context, listen: false);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1226,18 +1226,17 @@ class SettingsScreen extends ConsumerWidget {
     );
 
     if ((confirmed ?? false) && context.mounted) {
-      await ref.read(databaseServiceProvider).deleteDatabase();
-      _invalidateChatProviders(ref);
-      await ref.read(authStateProvider.notifier).logout();
-      ref.invalidate(authRepositoryProvider);
-      ref.invalidate(secureStorageProvider);
-      if (context.mounted) {
-        context.go('/login');
-      }
+      await _runDestructiveSignOut(
+        context,
+        ref,
+        container,
+        failureMessage: 'Failed to finish logout cleanup.',
+      );
     }
   }
 
   Future<void> _confirmDeleteAll(BuildContext context, WidgetRef ref) async {
+    final container = ProviderScope.containerOf(context, listen: false);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1263,31 +1262,52 @@ class SettingsScreen extends ConsumerWidget {
     );
 
     if ((confirmed ?? false) && context.mounted) {
-      // Clear database
-      final dbService = ref.read(databaseServiceProvider);
-      await dbService.deleteDatabase();
-      _invalidateChatProviders(ref);
+      await _runDestructiveSignOut(
+        context,
+        ref,
+        container,
+        failureMessage: 'Failed to delete all local data.',
+      );
+    }
+  }
 
-      // Clear secure storage
-      final secureStorage = SecureStorageService();
-      await secureStorage.clearIdentity();
+  Future<void> _runDestructiveSignOut(
+    BuildContext context,
+    WidgetRef ref,
+    ProviderContainer container, {
+    required String failureMessage,
+  }) async {
+    final activeSessionManager = ref.exists(sessionManagerServiceProvider)
+        ? container.read(sessionManagerServiceProvider)
+        : null;
 
-      // Logout (clears auth state)
-      await ref.read(authStateProvider.notifier).logout();
-      ref.invalidate(authRepositoryProvider);
-      ref.invalidate(secureStorageProvider);
+    try {
+      await container.read(authStateProvider.notifier).logout();
+      _invalidateChatProviders(container);
+      await container
+          .read(sessionManagerTeardownProvider)
+          .disposeAndClear(activeSessionManager);
+      await container.read(databaseServiceProvider).deleteDatabase();
 
       if (context.mounted) {
         context.go('/login');
       }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(failureMessage)));
+      }
     }
   }
 
-  void _invalidateChatProviders(WidgetRef ref) {
-    ref.invalidate(sessionStateProvider);
-    ref.invalidate(chatStateProvider);
-    ref.invalidate(groupStateProvider);
-    ref.invalidate(inviteStateProvider);
+  void _invalidateChatProviders(ProviderContainer container) {
+    container.invalidate(messageSubscriptionProvider);
+    container.invalidate(sessionManagerServiceProvider);
+    container.invalidate(sessionStateProvider);
+    container.invalidate(chatStateProvider);
+    container.invalidate(groupStateProvider);
+    container.invalidate(inviteStateProvider);
   }
 }
 

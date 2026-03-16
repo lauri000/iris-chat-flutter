@@ -15,6 +15,20 @@ import 'chat_provider.dart';
 import 'invite_provider.dart';
 import 'nostr_relay_settings_provider.dart';
 
+abstract class SessionManagerTeardown {
+  Future<void> disposeAndClear(SessionManagerService? service);
+}
+
+class DefaultSessionManagerTeardown implements SessionManagerTeardown {
+  const DefaultSessionManagerTeardown();
+
+  @override
+  Future<void> disposeAndClear(SessionManagerService? service) async {
+    await service?.dispose();
+    await SessionManagerService.clearPersistentStorage();
+  }
+}
+
 /// Provider for the Nostr service.
 final nostrServiceProvider = Provider<NostrService>((ref) {
   final relayUrls = ref.watch(
@@ -35,24 +49,31 @@ final nostrServiceProvider = Provider<NostrService>((ref) {
 final sessionManagerServiceProvider = Provider<SessionManagerService>((ref) {
   // Ensure this provider rebuilds when the authenticated identity/device changes
   // (e.g., login, linked-device login, key rotation).
-  ref.watch(
+  final authSnapshot = ref.watch(
     authStateProvider.select(
       (s) => (s.isAuthenticated, s.pubkeyHex, s.devicePubkeyHex),
     ),
   );
+  final isAuthenticated = authSnapshot.$1;
 
   final nostrService = ref.watch(nostrServiceProvider);
   final authRepository = ref.watch(authRepositoryProvider);
 
   final service = SessionManagerService(nostrService, authRepository);
 
-  unawaited(service.start().catchError((error, stackTrace) {}));
+  if (isAuthenticated) {
+    unawaited(service.start().catchError((error, stackTrace) {}));
+  }
 
   ref.onDispose(() {
     unawaited(service.dispose().catchError((error, stackTrace) {}));
   });
 
   return service;
+});
+
+final sessionManagerTeardownProvider = Provider<SessionManagerTeardown>((ref) {
+  return const DefaultSessionManagerTeardown();
 });
 
 /// Provider for message subscription (backwards-compatible alias).

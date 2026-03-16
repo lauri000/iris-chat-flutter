@@ -23,7 +23,9 @@ import 'package:iris_chat/core/services/messaging_preferences_service.dart';
 import 'package:iris_chat/core/services/nostr_relay_settings_service.dart';
 import 'package:iris_chat/core/services/nostr_service.dart';
 import 'package:iris_chat/core/services/profile_service.dart';
+import 'package:iris_chat/core/services/session_manager_service.dart';
 import 'package:iris_chat/core/services/startup_launch_service.dart';
+import 'package:iris_chat/features/auth/domain/models/identity.dart';
 import 'package:iris_chat/features/auth/domain/repositories/auth_repository.dart';
 import 'package:iris_chat/features/settings/presentation/screens/settings_screen.dart';
 import 'package:mocktail/mocktail.dart';
@@ -38,6 +40,95 @@ class MockDatabaseService extends Mock implements DatabaseService {}
 class MockNostrService extends Mock implements NostrService {}
 
 class MockProfileService extends Mock implements ProfileService {}
+
+class FakeSessionManagerTeardown implements SessionManagerTeardown {
+  FakeSessionManagerTeardown({this.onDisposeAndClear});
+
+  final Future<void> Function(SessionManagerService? service)? onDisposeAndClear;
+  int callCount = 0;
+  SessionManagerService? lastService;
+
+  @override
+  Future<void> disposeAndClear(SessionManagerService? service) async {
+    callCount += 1;
+    lastService = service;
+    final callback = onDisposeAndClear;
+    if (callback != null) {
+      await callback(service);
+    }
+  }
+}
+
+class ControlledAuthRepository implements AuthRepository {
+  ControlledAuthRepository({
+    required this.identity,
+    this.devicePubkeyHex = testPubkeyHex,
+    this.ownerPrivkeyHex = testPrivkeyHex,
+  });
+
+  final Identity identity;
+  final String devicePubkeyHex;
+  final String? ownerPrivkeyHex;
+  final Completer<void> logoutCompleter = Completer<void>();
+  int getCurrentIdentityCalls = 0;
+  int logoutCalls = 0;
+  bool _loggedOut = false;
+
+  void completeLogout() {
+    if (!logoutCompleter.isCompleted) {
+      logoutCompleter.complete();
+    }
+  }
+
+  @override
+  Future<Identity> createIdentity() {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Identity> login(String privateKeyNsec, {String? devicePrivkeyHex}) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Identity> loginLinkedDevice({
+    required String ownerPubkeyHex,
+    required String devicePrivkeyHex,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Identity?> getCurrentIdentity() async {
+    getCurrentIdentityCalls += 1;
+    return _loggedOut ? null : identity;
+  }
+
+  @override
+  Future<bool> hasIdentity() async => !_loggedOut;
+
+  @override
+  Future<void> logout() async {
+    logoutCalls += 1;
+    await logoutCompleter.future;
+    _loggedOut = true;
+  }
+
+  @override
+  Future<String?> getPrivateKey() async {
+    return _loggedOut ? null : testPrivkeyHex;
+  }
+
+  @override
+  Future<String?> getOwnerPrivateKey() async {
+    return _loggedOut ? null : ownerPrivkeyHex;
+  }
+
+  @override
+  Future<String?> getDevicePubkeyHex() async {
+    return _loggedOut ? null : devicePubkeyHex;
+  }
+}
 
 class FakeStartupLaunchService implements StartupLaunchService {
   FakeStartupLaunchService({this.supported = true, this.enabled = true});
@@ -349,6 +440,7 @@ void main() {
     bool? mobilePushSupported,
     DeviceManagerState? deviceManagerState,
     void Function(TestDeviceManagerNotifier notifier)? onDeviceNotifierCreated,
+    List<Override> extraOverrides = const [],
   }) {
     final List<Override> overrides = [
       authRepositoryProvider.overrideWithValue(mockAuthRepo),
@@ -408,8 +500,62 @@ void main() {
         mobilePushSupportedProvider.overrideWith((ref) => mobilePushSupported),
       );
     }
+    overrides.addAll(extraOverrides);
 
     return createTestApp(const SettingsScreen(), overrides: overrides);
+  }
+
+  List<Override> buildDangerZoneOverrides({
+    required AuthRepository authRepository,
+    SessionManagerTeardown? sessionManagerTeardown,
+    bool overrideAuthState = true,
+  }) {
+    final overrides = <Override>[
+      authRepositoryProvider.overrideWithValue(authRepository),
+      databaseServiceProvider.overrideWithValue(mockDbService),
+      startupLaunchServiceProvider.overrideWithValue(startupLaunchService),
+      messagingPreferencesServiceProvider.overrideWithValue(
+        messagingPreferencesService,
+      ),
+      imgproxySettingsServiceProvider.overrideWithValue(imgproxySettingsService),
+      nostrRelaySettingsServiceProvider.overrideWithValue(relaySettingsService),
+      appVersionProvider.overrideWith((ref) async => 'v2.6.6'),
+      nostrConnectionStatusProvider.overrideWith(
+        (ref) => Stream.value(const <String, bool>{}),
+      ),
+      nostrServiceProvider.overrideWithValue(mockNostrService),
+      profileServiceProvider.overrideWithValue(mockProfileService),
+      deviceManagerProvider.overrideWith((ref) {
+        return TestDeviceManagerNotifier(
+          ref,
+          mockNostrService,
+          authRepository,
+          initialState: const DeviceManagerState(isLoading: false, devices: []),
+        );
+      }),
+    ];
+    if (overrideAuthState) {
+      overrides.add(
+        authStateProvider.overrideWith((ref) {
+          final notifier = AuthNotifier(authRepository);
+          notifier.state = const AuthState(
+            isAuthenticated: true,
+            pubkeyHex: testPubkeyHex,
+            devicePubkeyHex: testPubkeyHex,
+            isInitialized: true,
+          );
+          return notifier;
+        }),
+      );
+    }
+    if (sessionManagerTeardown != null) {
+      overrides.add(
+        sessionManagerTeardownProvider.overrideWithValue(
+          sessionManagerTeardown,
+        ),
+      );
+    }
+    return overrides;
   }
 
   group('SettingsScreen', () {
@@ -1518,6 +1664,7 @@ void main() {
       });
 
       testWidgets('calls logout when confirmed', (tester) async {
+        final fakeTeardown = FakeSessionManagerTeardown();
         when(() => mockDbService.deleteDatabase()).thenAnswer((_) async {});
         when(() => mockAuthRepo.logout()).thenAnswer((_) async {});
 
@@ -1539,44 +1686,10 @@ void main() {
         await tester.pumpWidget(
           createTestRouterApp(
             router,
-            overrides: [
-              authRepositoryProvider.overrideWithValue(mockAuthRepo),
-              databaseServiceProvider.overrideWithValue(mockDbService),
-              startupLaunchServiceProvider.overrideWithValue(
-                startupLaunchService,
-              ),
-              nostrRelaySettingsServiceProvider.overrideWithValue(
-                relaySettingsService,
-              ),
-              imgproxySettingsServiceProvider.overrideWithValue(
-                imgproxySettingsService,
-              ),
-              nostrConnectionStatusProvider.overrideWith(
-                (ref) => Stream.value(const <String, bool>{}),
-              ),
-              nostrServiceProvider.overrideWithValue(mockNostrService),
-              profileServiceProvider.overrideWithValue(mockProfileService),
-              deviceManagerProvider.overrideWith((ref) {
-                return TestDeviceManagerNotifier(
-                  ref,
-                  mockNostrService,
-                  mockAuthRepo,
-                  initialState: const DeviceManagerState(
-                    isLoading: false,
-                    devices: [],
-                  ),
-                );
-              }),
-              authStateProvider.overrideWith((ref) {
-                final notifier = AuthNotifier(mockAuthRepo);
-                notifier.state = const AuthState(
-                  isAuthenticated: true,
-                  pubkeyHex: testPubkeyHex,
-                  isInitialized: true,
-                );
-                return notifier;
-              }),
-            ],
+            overrides: buildDangerZoneOverrides(
+              authRepository: mockAuthRepo,
+              sessionManagerTeardown: fakeTeardown,
+            ),
           ),
         );
         await tester.pumpAndSettle();
@@ -1586,14 +1699,274 @@ void main() {
         await tester.tap(logoutTile);
         await tester.pumpAndSettle();
 
-        // Tap the Logout button in the dialog (second one)
         await tester.tap(find.text('Logout').last);
         await tester.pumpAndSettle();
 
         verify(() => mockDbService.deleteDatabase()).called(1);
         verify(() => mockAuthRepo.logout()).called(1);
+        expect(fakeTeardown.callCount, 1);
         expect(find.text('Login Screen'), findsOneWidget);
       });
+
+      testWidgets(
+        'logout waits for teardown before deleting database and navigating',
+        (tester) async {
+          final teardownCompleter = Completer<void>();
+          final fakeTeardown = FakeSessionManagerTeardown(
+            onDisposeAndClear: (_) => teardownCompleter.future,
+          );
+          when(() => mockDbService.deleteDatabase()).thenAnswer((_) async {});
+          when(() => mockAuthRepo.logout()).thenAnswer((_) async {});
+
+          final router = GoRouter(
+            initialLocation: '/settings',
+            routes: [
+              GoRoute(
+                path: '/settings',
+                builder: (context, state) => const SettingsScreen(),
+              ),
+              GoRoute(
+                path: '/login',
+                builder: (context, state) =>
+                    const Scaffold(body: Text('Login Screen')),
+              ),
+            ],
+          );
+
+          await tester.pumpWidget(
+            createTestRouterApp(
+              router,
+              overrides: buildDangerZoneOverrides(
+                authRepository: mockAuthRepo,
+                sessionManagerTeardown: fakeTeardown,
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final logoutTile = find.widgetWithText(ListTile, 'Logout');
+          await tester.scrollUntilVisible(logoutTile, 300);
+          await tester.tap(logoutTile);
+          await tester.pumpAndSettle();
+
+          await tester.tap(find.text('Logout').last);
+          await tester.pump();
+
+          expect(fakeTeardown.callCount, 1);
+          verifyNever(() => mockDbService.deleteDatabase());
+          expect(find.text('Login Screen'), findsNothing);
+
+          teardownCompleter.complete();
+          await tester.pumpAndSettle();
+
+          verify(() => mockDbService.deleteDatabase()).called(1);
+          expect(find.text('Login Screen'), findsOneWidget);
+        },
+      );
+
+      testWidgets(
+        'delete all waits for teardown before deleting database and navigating',
+        (tester) async {
+          final teardownCompleter = Completer<void>();
+          final fakeTeardown = FakeSessionManagerTeardown(
+            onDisposeAndClear: (_) => teardownCompleter.future,
+          );
+          when(() => mockDbService.deleteDatabase()).thenAnswer((_) async {});
+          when(() => mockAuthRepo.logout()).thenAnswer((_) async {});
+
+          final router = GoRouter(
+            initialLocation: '/settings',
+            routes: [
+              GoRoute(
+                path: '/settings',
+                builder: (context, state) => const SettingsScreen(),
+              ),
+              GoRoute(
+                path: '/login',
+                builder: (context, state) =>
+                    const Scaffold(body: Text('Login Screen')),
+              ),
+            ],
+          );
+
+          await tester.pumpWidget(
+            createTestRouterApp(
+              router,
+              overrides: buildDangerZoneOverrides(
+                authRepository: mockAuthRepo,
+                sessionManagerTeardown: fakeTeardown,
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final deleteAllTile = find.widgetWithText(ListTile, 'Delete All Data');
+          await tester.scrollUntilVisible(deleteAllTile, 300);
+          await tester.tap(deleteAllTile);
+          await tester.pumpAndSettle();
+
+          await tester.tap(find.text('Delete Everything'));
+          await tester.pump();
+
+          expect(fakeTeardown.callCount, 1);
+          verifyNever(() => mockDbService.deleteDatabase());
+          expect(find.text('Login Screen'), findsNothing);
+
+          teardownCompleter.complete();
+          await tester.pumpAndSettle();
+
+          verify(() => mockDbService.deleteDatabase()).called(1);
+          expect(find.text('Login Screen'), findsOneWidget);
+        },
+      );
+
+      testWidgets(
+        'shows an error when logout cleanup fails and does not navigate',
+        (tester) async {
+          final fakeTeardown = FakeSessionManagerTeardown(
+            onDisposeAndClear: (_) async {
+              throw StateError('failed');
+            },
+          );
+          when(() => mockAuthRepo.logout()).thenAnswer((_) async {});
+
+          final router = GoRouter(
+            initialLocation: '/settings',
+            routes: [
+              GoRoute(
+                path: '/settings',
+                builder: (context, state) => const SettingsScreen(),
+              ),
+              GoRoute(
+                path: '/login',
+                builder: (context, state) =>
+                    const Scaffold(body: Text('Login Screen')),
+              ),
+            ],
+          );
+
+          await tester.pumpWidget(
+            createTestRouterApp(
+              router,
+              overrides: buildDangerZoneOverrides(
+                authRepository: mockAuthRepo,
+                sessionManagerTeardown: fakeTeardown,
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final logoutTile = find.widgetWithText(ListTile, 'Logout');
+          await tester.scrollUntilVisible(logoutTile, 300);
+          await tester.tap(logoutTile);
+          await tester.pumpAndSettle();
+
+          await tester.tap(find.text('Logout').last);
+          await tester.pumpAndSettle();
+
+          verify(() => mockAuthRepo.logout()).called(1);
+          verifyNever(() => mockDbService.deleteDatabase());
+          expect(find.text('Failed to finish logout cleanup.'), findsOneWidget);
+          expect(find.text('Login Screen'), findsNothing);
+        },
+      );
+
+      testWidgets(
+        'logout does not re-run auth check while logout is in flight',
+        (tester) async {
+          final controlledAuthRepo = ControlledAuthRepository(
+            identity: Identity(pubkeyHex: testPubkeyHex),
+          );
+          final fakeTeardown = FakeSessionManagerTeardown();
+          when(() => mockDbService.deleteDatabase()).thenAnswer((_) async {});
+
+          final container = ProviderContainer(
+            overrides: buildDangerZoneOverrides(
+              authRepository: controlledAuthRepo,
+              sessionManagerTeardown: fakeTeardown,
+              overrideAuthState: false,
+            ),
+          );
+          addTearDown(container.dispose);
+
+          await tester.pumpWidget(
+            UncontrolledProviderScope(
+              container: container,
+              child: Consumer(
+                builder: (context, ref, _) {
+                  final authState = ref.watch(authStateProvider);
+
+                  if (!authState.isInitialized && !authState.isLoading) {
+                    Future.microtask(() {
+                      ref.read(authStateProvider.notifier).checkAuth();
+                    });
+                  }
+
+                  final router = GoRouter(
+                    initialLocation: '/settings',
+                    redirect: (context, state) {
+                      if (!authState.isInitialized) {
+                        return null;
+                      }
+
+                      final isAuthRoute = state.matchedLocation == '/login';
+                      if (!authState.isAuthenticated && !isAuthRoute) {
+                        return '/login';
+                      }
+                      if (authState.isAuthenticated && isAuthRoute) {
+                        return '/settings';
+                      }
+                      return null;
+                    },
+                    routes: [
+                      GoRoute(
+                        path: '/settings',
+                        builder: (context, state) => const SettingsScreen(),
+                      ),
+                      GoRoute(
+                        path: '/login',
+                        builder: (context, state) =>
+                            const Scaffold(body: Text('Login Screen')),
+                      ),
+                    ],
+                  );
+
+                  return MaterialApp.router(
+                    theme: createTestTheme(),
+                    routerConfig: router,
+                  );
+                },
+              ),
+            ),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+
+          expect(controlledAuthRepo.getCurrentIdentityCalls, 1);
+          expect(container.read(authStateProvider).isAuthenticated, isTrue);
+
+          final logoutTile = find.widgetWithText(ListTile, 'Logout');
+          await tester.scrollUntilVisible(logoutTile, 300);
+          await tester.drag(find.byType(ListView), const Offset(0, -140));
+          await tester.pumpAndSettle();
+          await tester.tap(logoutTile);
+          await tester.pumpAndSettle();
+
+          await tester.tap(find.text('Logout').last);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+
+          expect(controlledAuthRepo.getCurrentIdentityCalls, 1);
+          expect(container.read(authStateProvider).isAuthenticated, isFalse);
+          expect(find.text('Login Screen'), findsOneWidget);
+
+          controlledAuthRepo.completeLogout();
+          await tester.pumpAndSettle();
+
+          verify(() => mockDbService.deleteDatabase()).called(1);
+          expect(container.read(authStateProvider).isAuthenticated, isFalse);
+        },
+      );
     });
 
     group('scrolling', () {

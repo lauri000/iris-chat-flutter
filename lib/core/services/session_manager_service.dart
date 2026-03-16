@@ -52,6 +52,7 @@ class SessionManagerService {
   final Map<String, int> _eventTimestamps = {};
   static const String _groupOuterSubId = 'ndr-group-outer';
   List<String> _groupOuterSenderEventPubkeys = const [];
+  static Future<void> _storageCriticalQueue = Future.value();
 
   /// Owner public key (hex) for this session manager (differs for linked devices).
   String? get ownerPubkeyHex => _ownerPubkeyHex;
@@ -442,37 +443,43 @@ class SessionManagerService {
   }
 
   Future<void> _initManager() async {
-    final identity = await _authRepository.getCurrentIdentity();
-    final devicePrivkeyHex = await _authRepository.getPrivateKey();
-    if (identity?.pubkeyHex == null || devicePrivkeyHex == null) {
-      Logger.warning(
-        'Session manager not initialized: missing identity',
-        category: LogCategory.session,
-      );
-      return;
-    }
+    await _runStorageCritical(
+      action: () async {
+        final identity = await _authRepository.getCurrentIdentity();
+        final devicePrivkeyHex = await _authRepository.getPrivateKey();
+        if (identity?.pubkeyHex == null || devicePrivkeyHex == null) {
+          Logger.warning(
+            'Session manager not initialized: missing identity',
+            category: LogCategory.session,
+          );
+          return;
+        }
 
-    final ownerPubkeyHex = identity!.pubkeyHex;
-    final devicePubkeyHex = await NdrFfi.derivePublicKey(devicePrivkeyHex);
+        final ownerPubkeyHex = identity!.pubkeyHex;
+        final devicePubkeyHex = await NdrFfi.derivePublicKey(devicePrivkeyHex);
 
-    final storagePath = await _resolveStoragePath();
-    // ndr-ffi expects the directory to exist.
-    await Directory(storagePath).create(recursive: true);
+        final storagePath = await _resolveStoragePath();
+        // ndr-ffi expects the directory to exist.
+        await Directory(storagePath).create(recursive: true);
 
-    _manager = await NdrFfi.createSessionManager(
-      ourPubkeyHex: devicePubkeyHex,
-      ourIdentityPrivkeyHex: devicePrivkeyHex,
-      deviceId: devicePubkeyHex,
-      storagePath: storagePath,
-      ownerPubkeyHex: ownerPubkeyHex == devicePubkeyHex ? null : ownerPubkeyHex,
+        _manager = await NdrFfi.createSessionManager(
+          ourPubkeyHex: devicePubkeyHex,
+          ourIdentityPrivkeyHex: devicePrivkeyHex,
+          deviceId: devicePubkeyHex,
+          storagePath: storagePath,
+          ownerPubkeyHex: ownerPubkeyHex == devicePubkeyHex
+              ? null
+              : ownerPubkeyHex,
+        );
+
+        await _manager!.init();
+        _ownerPubkeyHex = await _manager!.getOwnerPubkeyHex();
+        _devicePubkeyHex = devicePubkeyHex;
+
+        await _drainEventsUnlocked();
+        await _refreshGroupOuterSubscription();
+      },
     );
-
-    await _manager!.init();
-    _ownerPubkeyHex = await _manager!.getOwnerPubkeyHex();
-    _devicePubkeyHex = devicePubkeyHex;
-
-    await _drainEventsUnlocked();
-    await _refreshGroupOuterSubscription();
   }
 
   Future<void> _ensureManagerInitializedUnlocked() async {
@@ -481,11 +488,30 @@ class SessionManagerService {
   }
 
   Future<String> _resolveStoragePath() async {
-    final override = _storagePathOverride;
+    return resolveStoragePath(storagePathOverride: _storagePathOverride);
+  }
+
+  /// Resolve the on-disk storage directory used by ndr-ffi SessionManager.
+  static Future<String> resolveStoragePath({String? storagePathOverride}) async {
+    final override = storagePathOverride;
     if (override != null && override.isNotEmpty) return override;
 
     final supportDir = await getApplicationSupportDirectory();
     return '${supportDir.path}/ndr';
+  }
+
+  /// Delete all persisted ndr-ffi SessionManager storage from disk.
+  static Future<void> clearPersistentStorage({String? storagePathOverride}) async {
+    await _runStorageCritical(
+      action: () async {
+        final storagePath = await resolveStoragePath(
+          storagePathOverride: storagePathOverride,
+        );
+        final dir = Directory(storagePath);
+        if (!await dir.exists()) return;
+        await dir.delete(recursive: true);
+      },
+    );
   }
 
   Future<void> _handleEvent(NostrEvent event) async {
@@ -704,5 +730,24 @@ class SessionManagerService {
           await action();
         })
         .catchError((error, stackTrace) {});
+  }
+
+  static Future<T> _runStorageCritical<T>({
+    required Future<T> Function() action,
+  }) {
+    final completer = Completer<T>();
+
+    _storageCriticalQueue = _storageCriticalQueue.catchError((_) {}).then((_) async {
+      try {
+        final result = await action();
+        if (!completer.isCompleted) completer.complete(result);
+      } catch (error, stackTrace) {
+        if (!completer.isCompleted) {
+          completer.completeError(error, stackTrace);
+        }
+      }
+    });
+
+    return completer.future;
   }
 }

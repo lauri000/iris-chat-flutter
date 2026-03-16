@@ -163,8 +163,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   /// Logout and clear identity.
   Future<void> logout() async {
-    await _repository.logout();
+    // Flip auth state first so dependent providers can tear down before storage wipes.
     state = const AuthState(isInitialized: true);
+    await _repository.logout();
   }
 
   /// Clear any error state.
