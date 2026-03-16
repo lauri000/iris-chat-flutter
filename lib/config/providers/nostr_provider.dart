@@ -15,6 +15,20 @@ import 'chat_provider.dart';
 import 'invite_provider.dart';
 import 'nostr_relay_settings_provider.dart';
 
+abstract class SessionManagerTeardown {
+  Future<void> disposeAndClear(SessionManagerService? service);
+}
+
+class DefaultSessionManagerTeardown implements SessionManagerTeardown {
+  const DefaultSessionManagerTeardown();
+
+  @override
+  Future<void> disposeAndClear(SessionManagerService? service) async {
+    await service?.dispose();
+    await SessionManagerService.clearPersistentStorage();
+  }
+}
+
 /// Provider for the Nostr service.
 final nostrServiceProvider = Provider<NostrService>((ref) {
   final relayUrls = ref.watch(
@@ -56,6 +70,10 @@ final sessionManagerServiceProvider = Provider<SessionManagerService>((ref) {
   });
 
   return service;
+});
+
+final sessionManagerTeardownProvider = Provider<SessionManagerTeardown>((ref) {
+  return const DefaultSessionManagerTeardown();
 });
 
 /// Provider for message subscription (backwards-compatible alias).

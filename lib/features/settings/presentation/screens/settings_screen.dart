@@ -23,7 +23,6 @@ import '../../../../config/providers/startup_launch_provider.dart';
 import '../../../../core/services/imgproxy_service.dart';
 import '../../../../core/services/nostr_relay_settings_service.dart';
 import '../../../../core/services/profile_service.dart';
-import '../../../../core/services/session_manager_service.dart';
 import '../../../../shared/utils/formatters.dart';
 import '../../../../shared/widgets/image_viewer_modal.dart';
 import '../../../chat/presentation/widgets/chats_back_button.dart';
@@ -1203,7 +1202,7 @@ class SettingsScreen extends ConsumerWidget {
     ).showSnackBar(SnackBar(content: Text(error ?? successMessage)));
   }
 
-  Future<void> _confirmLogout(BuildContext context, WidgetRef _) async {
+  Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
     final container = ProviderScope.containerOf(context, listen: false);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1227,19 +1226,16 @@ class SettingsScreen extends ConsumerWidget {
     );
 
     if ((confirmed ?? false) && context.mounted) {
-      _invalidateChatProviders(container);
-      container.invalidate(authRepositoryProvider);
-      container.invalidate(secureStorageProvider);
-      await container.read(authStateProvider.notifier).logout();
-      await _clearNdrStorage(container, invalidateProviders: false);
-      await container.read(databaseServiceProvider).deleteDatabase();
-      if (context.mounted) {
-        context.go('/login');
-      }
+      await _runDestructiveSignOut(
+        context,
+        ref,
+        container,
+        failureMessage: 'Failed to finish logout cleanup.',
+      );
     }
   }
 
-  Future<void> _confirmDeleteAll(BuildContext context, WidgetRef _) async {
+  Future<void> _confirmDeleteAll(BuildContext context, WidgetRef ref) async {
     final container = ProviderScope.containerOf(context, listen: false);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1266,15 +1262,41 @@ class SettingsScreen extends ConsumerWidget {
     );
 
     if ((confirmed ?? false) && context.mounted) {
-      _invalidateChatProviders(container);
-      container.invalidate(authRepositoryProvider);
-      container.invalidate(secureStorageProvider);
+      await _runDestructiveSignOut(
+        context,
+        ref,
+        container,
+        failureMessage: 'Failed to delete all local data.',
+      );
+    }
+  }
+
+  Future<void> _runDestructiveSignOut(
+    BuildContext context,
+    WidgetRef ref,
+    ProviderContainer container, {
+    required String failureMessage,
+  }) async {
+    final activeSessionManager = ref.exists(sessionManagerServiceProvider)
+        ? container.read(sessionManagerServiceProvider)
+        : null;
+
+    try {
       await container.read(authStateProvider.notifier).logout();
-      await _clearNdrStorage(container, invalidateProviders: false);
+      _invalidateChatProviders(container);
+      await container
+          .read(sessionManagerTeardownProvider)
+          .disposeAndClear(activeSessionManager);
       await container.read(databaseServiceProvider).deleteDatabase();
 
       if (context.mounted) {
         context.go('/login');
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(failureMessage)));
       }
     }
   }
@@ -1286,21 +1308,6 @@ class SettingsScreen extends ConsumerWidget {
     container.invalidate(chatStateProvider);
     container.invalidate(groupStateProvider);
     container.invalidate(inviteStateProvider);
-  }
-
-  Future<void> _clearNdrStorage(
-    ProviderContainer container, {
-    bool invalidateProviders = true,
-  }) async {
-    // Invalidate providers first so native handles are disposed before wiping files.
-    if (invalidateProviders) {
-      _invalidateChatProviders(container);
-    }
-    try {
-      await SessionManagerService.clearPersistentStorage();
-    } catch (_) {
-      // Best-effort cleanup.
-    }
   }
 }
 
