@@ -334,7 +334,7 @@ void main() {
   });
 
   Widget buildSettingsScreen({
-    String appVersion = 'v2.6.4',
+    String appVersion = 'v2.6.6',
     String? pubkeyHex,
     bool isAuthenticated = true,
     bool isLinkedDevice = false,
@@ -1062,7 +1062,7 @@ void main() {
 
         await tester.scrollUntilVisible(find.text('Version'), 300);
         expect(find.text('Version'), findsOneWidget);
-        expect(find.text('v2.6.4'), findsOneWidget);
+        expect(find.text('v2.6.6'), findsOneWidget);
         expect(find.byIcon(Icons.info), findsOneWidget);
       });
 
