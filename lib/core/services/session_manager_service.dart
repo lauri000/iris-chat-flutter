@@ -364,13 +364,17 @@ class SessionManagerService {
     String? deviceId,
   }) async {
     await _runExclusive(() async {
+      await _ensureManagerInitializedUnlocked();
       final manager = _manager;
-      if (manager == null) return;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
       await manager.importSessionState(
         peerPubkeyHex: peerPubkeyHex,
         stateJson: stateJson,
         deviceId: deviceId,
       );
+      await _drainEventsUnlocked();
     });
   }
 
@@ -471,6 +475,11 @@ class SessionManagerService {
     await _refreshGroupOuterSubscription();
   }
 
+  Future<void> _ensureManagerInitializedUnlocked() async {
+    if (_manager != null || _isDisposed) return;
+    await _initManager();
+  }
+
   Future<String> _resolveStoragePath() async {
     final override = _storagePathOverride;
     if (override != null && override.isNotEmpty) return override;
@@ -488,9 +497,10 @@ class SessionManagerService {
       return;
     }
 
-    // De-dupe by id. It's normal to receive the same event multiple times
-    // (multiple relays, overlapping subscriptions, reconnect replays).
-    if (_eventTimestamps.containsKey(event.id)) return;
+    // De-dupe by id for non-message kinds. For direct 1060 messages we need to
+    // allow later replays after new session subscriptions come online, because a
+    // relay may deliver the event before the relevant imported/accepted session exists.
+    if (event.kind != 1060 && _eventTimestamps.containsKey(event.id)) return;
     _eventTimestamps[event.id] = event.createdAt;
     // Prevent unbounded growth in long-running sessions.
     if (_eventTimestamps.length > 10000) {

@@ -121,13 +121,13 @@ class AppBootstrapNotifier extends StateNotifier<AppBootstrapState> {
 
       await ref.read(inviteStateProvider.notifier).loadInvites();
       try {
-        await ref
-            .read(inviteStateProvider.notifier)
-            .ensurePublishedPublicInvite();
+        ref.read(messageSubscriptionProvider);
       } catch (_) {}
 
       try {
-        ref.read(messageSubscriptionProvider);
+        await ref
+            .read(inviteStateProvider.notifier)
+            .ensurePublishedPublicInvite();
       } catch (_) {}
 
       if (!mounted || runId != _runId) return;

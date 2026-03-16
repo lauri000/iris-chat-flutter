@@ -13,11 +13,13 @@ import 'package:iris_chat/config/providers/auth_provider.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/config/providers/invite_provider.dart';
 import 'package:iris_chat/config/providers/nostr_provider.dart';
+import 'package:iris_chat/core/ffi/ndr_ffi.dart';
 import 'package:iris_chat/core/services/database_service.dart';
 import 'package:iris_chat/core/services/nostr_service.dart';
 import 'package:iris_chat/core/services/secure_storage_service.dart';
 import 'package:iris_chat/core/services/session_manager_service.dart';
 import 'package:iris_chat/core/utils/invite_url.dart';
+import 'package:iris_chat/features/auth/data/repositories/auth_repository_impl.dart';
 import 'package:iris_chat/features/chat/presentation/screens/chat_screen.dart';
 import 'package:iris_chat/features/chat/presentation/widgets/typing_dots.dart';
 import 'package:mocktail/mocktail.dart';
@@ -185,12 +187,12 @@ Future<_AppInstance> _startInstance({
   // Bring transport online.
   await container.read(nostrServiceProvider).connect();
 
+  // Start message + invite subscription bridge.
+  container.read(messageSubscriptionProvider);
+
   await container
       .read(inviteStateProvider.notifier)
       .ensurePublishedPublicInvite();
-
-  // Start message + invite subscription bridge.
-  container.read(messageSubscriptionProvider);
 
   return _AppInstance(
     name: name,
@@ -285,6 +287,163 @@ String _describeRelayDrEvents(TestRelay relay) {
     sb.writeln('  id=$id8 pubkey=$pk8 p=$p8');
   }
   return sb.toString();
+}
+
+bool _hasChatMessage(
+  ProviderContainer container,
+  String text, {
+  bool? isIncoming,
+}) {
+  final allMessages = container.read(chatStateProvider).messages.values;
+  for (final messages in allMessages) {
+    for (final message in messages) {
+      if (message.text != text) continue;
+      if (isIncoming != null && message.isIncoming != isIncoming) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+String _describeInstances(Iterable<_AppInstance?> instances) {
+  final sb = StringBuffer();
+  for (final instance in instances) {
+    if (instance == null) continue;
+    sb.writeln('--- ${instance.name} ---');
+    sb.writeln(_describeChatState(instance.container));
+  }
+  return sb.toString();
+}
+
+Future<_AppInstance> _startLinkedInstance({
+  required String name,
+  required String relayUrl,
+  required TestRelay relay,
+  required _AppInstance owner,
+}) async {
+  final ownerContainer = owner.container;
+  final ownerPubkeyHex = ownerContainer.read(authStateProvider).pubkeyHex;
+  if (ownerPubkeyHex == null || ownerPubkeyHex.isEmpty) {
+    throw StateError('Owner pubkey missing for linked device $name');
+  }
+
+  final deviceNostr = NostrService(relayUrls: [relayUrl]);
+  final deviceStorage = _createInMemorySecureStorage();
+  final deviceRepo = AuthRepositoryImpl(deviceStorage);
+
+  StreamSubscription<NostrEvent>? deviceSub;
+  String? subid;
+  InviteHandle? deviceInvite;
+  InviteResponseResult? response;
+
+  try {
+    await deviceNostr.connect();
+
+    final deviceKeypair = await NdrFfi.generateKeypair();
+    deviceInvite = await NdrFfi.createInvite(
+      inviterPubkeyHex: deviceKeypair.publicKeyHex,
+      deviceId: deviceKeypair.publicKeyHex,
+      maxUses: 1,
+    );
+    await deviceInvite.setPurpose('link');
+    final inviteUrl = await deviceInvite.toUrl('https://iris.to');
+
+    final data = decodeInviteUrlData(inviteUrl);
+    final eph =
+        data?['ephemeralKey'] ??
+        data?['inviterEphemeralPublicKey'] ??
+        data?['inviterEphemeralPublicKeyHex'];
+    final inviteEph = eph is String ? eph : eph?.toString();
+    if (inviteEph == null || inviteEph.isEmpty) {
+      throw StateError('Invite URL missing ephemeral key for linked device');
+    }
+
+    final responseCompleter = Completer<NostrEvent>();
+    subid = 'link-device-$name-${DateTime.now().microsecondsSinceEpoch}';
+    deviceSub = deviceNostr.events.listen((event) {
+      if (responseCompleter.isCompleted) return;
+      if (event.subscriptionId != subid) return;
+      if (event.kind != 1059) return;
+      responseCompleter.complete(event);
+    });
+    deviceNostr.subscribeWithId(
+      subid,
+      NostrFilter(kinds: const [1059], pTags: [inviteEph]),
+    );
+
+    await _pumpUntil(
+      condition: () =>
+          relay.hasKindAndPTagSubscription(kind: 1059, pTagValue: inviteEph),
+      timeout: const Duration(seconds: 6),
+    );
+
+    final accepted = await ownerContainer
+        .read(inviteStateProvider.notifier)
+        .acceptLinkInviteFromUrl(inviteUrl);
+    if (!accepted) {
+      final error = ownerContainer.read(inviteStateProvider).error;
+      throw StateError(
+        'Owner failed to accept link invite for $name${error == null ? "" : ": $error"}',
+      );
+    }
+
+    final responseEvent = await responseCompleter.future.timeout(
+      const Duration(seconds: 10),
+    );
+    response = await deviceInvite.processResponse(
+      eventJson: jsonEncode(responseEvent.toJson()),
+      inviterPrivkeyHex: deviceKeypair.privateKeyHex,
+    );
+
+    final resolvedOwnerPubkeyHex =
+        response!.ownerPubkeyHex ?? response.inviteePubkeyHex;
+    final sessionState = await response.session.stateJson();
+    final remoteDeviceId = response.inviteePubkeyHex;
+    if (resolvedOwnerPubkeyHex == null || resolvedOwnerPubkeyHex.isEmpty) {
+      throw StateError('Invite response missing owner pubkey for $name');
+    }
+    if (resolvedOwnerPubkeyHex.toLowerCase() != ownerPubkeyHex.toLowerCase()) {
+      throw StateError(
+        'Linked device owner mismatch for $name: '
+        '$resolvedOwnerPubkeyHex != $ownerPubkeyHex',
+      );
+    }
+
+    await deviceRepo.loginLinkedDevice(
+      ownerPubkeyHex: resolvedOwnerPubkeyHex,
+      devicePrivkeyHex: deviceKeypair.privateKeyHex,
+    );
+
+    final instance = await _startInstance(
+      name: name,
+      relayUrl: relayUrl,
+      secureStorageOverride: deviceStorage,
+      createIdentity: false,
+      restoreIdentity: true,
+    );
+
+    await instance.container
+        .read(sessionManagerServiceProvider)
+        .importSessionState(
+          peerPubkeyHex: resolvedOwnerPubkeyHex,
+          stateJson: sessionState,
+          deviceId: remoteDeviceId,
+        );
+
+    return instance;
+  } finally {
+    if (subid != null) {
+      deviceNostr.closeSubscription(subid);
+    }
+    await deviceSub?.cancel();
+    try {
+      await response?.session.dispose();
+    } catch (_) {}
+    try {
+      await deviceInvite?.dispose();
+    } catch (_) {}
+    await deviceNostr.dispose();
+  }
 }
 
 String _describeDecryptedMessage(DecryptedMessage m) {
@@ -1023,7 +1182,8 @@ void main() {
 
       final burst = List<String>.generate(
         8,
-        (i) => 'ui burst bob->alice #$i ${DateTime.now().millisecondsSinceEpoch}',
+        (i) =>
+            'ui burst bob->alice #$i ${DateTime.now().millisecondsSinceEpoch}',
       );
 
       await Future.wait(
@@ -1036,7 +1196,8 @@ void main() {
 
       await _pumpUntil(
         condition: () {
-          final msgs = aliceC.read(chatStateProvider).messages[aliceSession.id] ??
+          final msgs =
+              aliceC.read(chatStateProvider).messages[aliceSession.id] ??
               const <dynamic>[];
           final incomingTexts = msgs
               .where((m) => m.isIncoming)
@@ -1123,4 +1284,166 @@ void main() {
       }
     },
   );
+
+  testWidgets('two users with linked devices sync messages across all devices', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    if (!Platform.isMacOS) {
+      return;
+    }
+
+    final relay = await TestRelay.start();
+    final relayUrl = 'ws://127.0.0.1:${relay.port}';
+
+    _AppInstance? aliceOwner;
+    _AppInstance? aliceLinked;
+    _AppInstance? bobOwner;
+    _AppInstance? bobLinked;
+
+    String debugState() {
+      return '${_describeInstances([aliceOwner, aliceLinked, bobOwner, bobLinked])}\n'
+          '--- relay ---\n${_describeRelayDrEvents(relay)}';
+    }
+
+    try {
+      aliceOwner = await _startInstance(
+        name: 'alice-owner-multi-device',
+        relayUrl: relayUrl,
+      );
+      bobOwner = await _startInstance(
+        name: 'bob-owner-multi-device',
+        relayUrl: relayUrl,
+      );
+
+      final aliceOwnerC = aliceOwner.container;
+      final bobOwnerC = bobOwner.container;
+      final alicePubkey = aliceOwnerC.read(authStateProvider).pubkeyHex;
+      final bobPubkey = bobOwnerC.read(authStateProvider).pubkeyHex;
+      expect(alicePubkey, isNotNull);
+      expect(bobPubkey, isNotNull);
+
+      final baseAliceSession = await aliceOwnerC
+          .read(sessionStateProvider.notifier)
+          .ensureSessionForRecipient(bobPubkey!);
+      final bootstrapText =
+          'owner bootstrap ${DateTime.now().millisecondsSinceEpoch}';
+      await aliceOwnerC
+          .read(chatStateProvider.notifier)
+          .sendMessage(baseAliceSession.id, bootstrapText);
+
+      await _pumpUntil(
+        condition: () =>
+            _hasChatMessage(bobOwnerC, bootstrapText, isIncoming: true),
+        timeout: const Duration(seconds: 20),
+        debugOnTimeout: debugState,
+      );
+
+      await aliceOwnerC
+          .read(sessionManagerServiceProvider)
+          .setupUser(bobPubkey!);
+      await bobOwnerC
+          .read(sessionManagerServiceProvider)
+          .setupUser(alicePubkey!);
+
+      aliceLinked = await _startLinkedInstance(
+        name: 'alice-linked-multi-device',
+        relayUrl: relayUrl,
+        relay: relay,
+        owner: aliceOwner,
+      );
+      await bobOwnerC
+          .read(sessionManagerServiceProvider)
+          .setupUser(alicePubkey!);
+
+      bobLinked = await _startLinkedInstance(
+        name: 'bob-linked-multi-device',
+        relayUrl: relayUrl,
+        relay: relay,
+        owner: bobOwner,
+      );
+      await aliceOwnerC
+          .read(sessionManagerServiceProvider)
+          .setupUser(bobPubkey!);
+
+      final aliceOwnerSessionId = aliceOwnerC
+          .read(sessionStateProvider)
+          .sessions
+          .firstWhere((s) => s.recipientPubkeyHex == bobPubkey)
+          .id;
+
+      final ownerToBobText =
+          'alice owner -> bob all devices ${DateTime.now().millisecondsSinceEpoch}';
+      await aliceOwnerC
+          .read(chatStateProvider.notifier)
+          .sendMessage(aliceOwnerSessionId, ownerToBobText);
+
+      await _pumpUntil(
+        condition: () =>
+            _hasChatMessage(
+              aliceLinked!.container,
+              ownerToBobText,
+              isIncoming: false,
+            ) &&
+            _hasChatMessage(bobOwnerC, ownerToBobText, isIncoming: true) &&
+            _hasChatMessage(
+              bobLinked!.container,
+              ownerToBobText,
+              isIncoming: true,
+            ),
+        timeout: const Duration(seconds: 25),
+        debugOnTimeout: debugState,
+      );
+
+      await _pumpUntil(
+        condition: () {
+          final sessions = bobLinked!.container.read(sessionStateProvider);
+          return sessions.sessions.any(
+            (s) => s.recipientPubkeyHex == alicePubkey,
+          );
+        },
+        timeout: const Duration(seconds: 20),
+        debugOnTimeout: debugState,
+      );
+
+      final bobLinkedSessionId = bobLinked!.container
+          .read(sessionStateProvider)
+          .sessions
+          .firstWhere((s) => s.recipientPubkeyHex == alicePubkey)
+          .id;
+
+      await bobLinked.container
+          .read(sessionManagerServiceProvider)
+          .setupUser(alicePubkey);
+      await bobLinked.container
+          .read(sessionManagerServiceProvider)
+          .setupUser(bobPubkey);
+
+      final linkedToAliceText =
+          'bob linked -> alice all devices ${DateTime.now().millisecondsSinceEpoch}';
+      await bobLinked.container
+          .read(chatStateProvider.notifier)
+          .sendMessage(bobLinkedSessionId, linkedToAliceText);
+
+      await _pumpUntil(
+        condition: () =>
+            _hasChatMessage(bobOwnerC, linkedToAliceText, isIncoming: false) &&
+            _hasChatMessage(aliceOwnerC, linkedToAliceText, isIncoming: true) &&
+            _hasChatMessage(
+              aliceLinked!.container,
+              linkedToAliceText,
+              isIncoming: true,
+            ),
+        timeout: const Duration(seconds: 25),
+        debugOnTimeout: debugState,
+      );
+    } finally {
+      await aliceOwner?.dispose();
+      await aliceLinked?.dispose();
+      await bobOwner?.dispose();
+      await bobLinked?.dispose();
+      await relay.stop();
+    }
+  });
 }

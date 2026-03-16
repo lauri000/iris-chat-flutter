@@ -638,12 +638,21 @@ Future<void> _handleCommand({
           final ownerPubkeyHex =
               (response.ownerPubkeyHex ?? response.inviteePubkeyHex)
                   .toLowerCase();
+          final sessionState = await response.session.stateJson();
+          final remoteDeviceId = response.inviteePubkeyHex;
 
           await container
               .read(authStateProvider.notifier)
               .loginLinkedDevice(
                 ownerPubkeyHex: ownerPubkeyHex,
                 devicePrivkeyHex: pending.devicePrivkeyHex,
+              );
+          await container
+              .read(sessionManagerServiceProvider)
+              .importSessionState(
+                peerPubkeyHex: ownerPubkeyHex,
+                stateJson: sessionState,
+                deviceId: remoteDeviceId,
               );
 
           // Mirror app bootstrap for linked-device login so invite/session

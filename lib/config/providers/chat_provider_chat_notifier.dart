@@ -314,17 +314,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
     int? createdAt,
   }) async {
     try {
+      if (!mounted) return null;
       if (eventId != null && await _messageDatasource.messageExists(eventId)) {
         return null;
       }
+      if (!mounted) return null;
 
       final rumor = NostrRumor.tryParse(content);
 
       // Legacy fallback: treat decrypted plaintext as a chat message.
       if (rumor == null) {
+        if (!mounted) return null;
         final existingSession = await _sessionDatasource.getSessionByRecipient(
           senderPubkeyHex,
         );
+        if (!mounted) return null;
         final sessionId = existingSession?.id ?? senderPubkeyHex;
 
         if (existingSession == null) {
@@ -373,15 +377,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
         rumor: rumor,
         ownerPubkeyHex: ownerPubkeyHex,
       );
+      if (!mounted) return null;
 
       if (peerPubkeyHex == null || peerPubkeyHex.isEmpty) {
         return null;
       }
 
       // Find or create session by recipient pubkey (peer pubkey).
+      if (!mounted) return null;
       final existingSession = await _sessionDatasource.getSessionByRecipient(
         peerPubkeyHex,
       );
+      if (!mounted) return null;
       final sessionId = existingSession?.id ?? peerPubkeyHex;
 
       if (existingSession == null) {
@@ -607,6 +614,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     required NostrRumor rumor,
     required String? ownerPubkeyHex,
   }) async {
+    if (!mounted) return null;
     final owner = ownerPubkeyHex?.toLowerCase().trim();
     final sender = senderPubkeyHex.toLowerCase().trim();
     final rumorAuthor = rumor.pubkey.toLowerCase().trim();
@@ -634,10 +642,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
 
     for (final candidate in candidates) {
+      if (!mounted) return null;
       if (owner != null && candidate == owner) continue;
       final existing = await _sessionDatasource.getSessionByRecipient(
         candidate,
       );
+      if (!mounted) return null;
       if (existing != null) return candidate;
     }
 

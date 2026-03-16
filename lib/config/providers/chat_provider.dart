@@ -101,7 +101,8 @@ final sessionStateProvider =
     StateNotifierProvider<SessionNotifier, SessionState>((ref) {
       final datasource = ref.watch(sessionDatasourceProvider);
       final profileService = ref.watch(profileServiceProvider);
-      return SessionNotifier(datasource, profileService);
+      final sessionManagerService = ref.watch(sessionManagerServiceProvider);
+      return SessionNotifier(datasource, profileService, sessionManagerService);
     });
 
 final chatStateProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {

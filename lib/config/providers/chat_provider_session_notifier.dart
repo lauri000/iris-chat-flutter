@@ -1,12 +1,24 @@
 part of 'chat_provider.dart';
 
 class SessionNotifier extends StateNotifier<SessionState> {
-  SessionNotifier(this._sessionDatasource, this._profileService)
-    : super(const SessionState());
+  SessionNotifier(
+    this._sessionDatasource,
+    this._profileService,
+    this._sessionManagerService,
+  ) : super(const SessionState());
 
   final SessionLocalDatasource _sessionDatasource;
   final ProfileService _profileService;
+  final SessionManagerService _sessionManagerService;
   static const Duration _kLoadTimeout = Duration(seconds: 3);
+
+  void _armPeerSession(String recipientPubkeyHex) {
+    final normalized = recipientPubkeyHex.trim().toLowerCase();
+    if (normalized.isEmpty) return;
+    unawaited(
+      _sessionManagerService.setupUser(normalized).catchError((_, __) {}),
+    );
+  }
 
   void _upsertSessionInState(ChatSession session) {
     // Avoid duplicate sessions in memory when the same session is "added" twice
@@ -104,6 +116,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
   /// Add a new session.
   Future<void> addSession(ChatSession session) async {
     _upsertSessionInState(session);
+    _armPeerSession(session.recipientPubkeyHex);
     unawaited(
       _profileService
           .fetchProfiles([session.recipientPubkeyHex])
@@ -142,6 +155,7 @@ class SessionNotifier extends StateNotifier<SessionState> {
     );
 
     _upsertSessionInState(session);
+    _armPeerSession(normalized);
     unawaited(() async {
       try {
         await _profileService.fetchProfiles([normalized]);

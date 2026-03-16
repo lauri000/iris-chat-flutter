@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -33,6 +35,7 @@ class DatabaseService {
 
   Future<Database> _initDatabase() async {
     final path = _dbPathOverride ?? await _defaultDbPath();
+    await Directory(dirname(path)).create(recursive: true);
 
     return openDatabase(
       path,

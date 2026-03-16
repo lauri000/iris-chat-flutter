@@ -9,9 +9,11 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../../config/providers/auth_provider.dart';
+import '../../../../config/providers/invite_provider.dart';
 import '../../../../config/providers/nostr_provider.dart';
 import '../../../../core/ffi/ndr_ffi.dart';
 import '../../../../core/services/nostr_service.dart';
+import '../../../../core/services/session_manager_service.dart';
 import '../../../../core/utils/invite_url.dart';
 
 class LinkDeviceScreen extends ConsumerStatefulWidget {
@@ -131,6 +133,8 @@ class _LinkDeviceScreenState extends ConsumerState<LinkDeviceScreen> {
         if (result == null) return;
 
         final ownerPubkeyHex = result.ownerPubkeyHex ?? result.inviteePubkeyHex;
+        final sessionState = await result.session.stateJson();
+        final remoteDeviceId = result.inviteePubkeyHex;
 
         _handledAcceptance = true;
         await _cleanupSubscription();
@@ -143,6 +147,23 @@ class _LinkDeviceScreenState extends ConsumerState<LinkDeviceScreen> {
               ownerPubkeyHex: ownerPubkeyHex,
               devicePrivkeyHex: devicePrivkeyHex,
             );
+
+        // Bring up the invite-response bridge before publishing this device's
+        // public invite so the first peer acceptance can't outrun the listener.
+        ref.read(messageSubscriptionProvider);
+
+        await ref
+            .read(sessionManagerServiceProvider)
+            .importSessionState(
+              peerPubkeyHex: ownerPubkeyHex,
+              stateJson: sessionState,
+              deviceId: remoteDeviceId,
+            );
+
+        await ref
+            .read(inviteStateProvider.notifier)
+            .ensurePublishedPublicInvite();
+        await ref.read(sessionManagerServiceProvider).refreshSubscription();
 
         if (mounted) {
           context.go('/chats');

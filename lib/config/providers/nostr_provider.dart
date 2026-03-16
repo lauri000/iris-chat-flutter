@@ -67,20 +67,29 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
 
   const inviteResponsesSubId = 'app-invite-responses';
   const groupSenderKeyDistributionKind = 10446;
+  var disposed = false;
 
   // Serialize all processing in this provider to reduce SQLite "database locked"
   // warnings caused by concurrent async stream handlers.
   Future<void> serial = Future.value();
   void schedule(Future<void> Function() task) {
-    serial = serial.then((_) => task()).catchError((error, stackTrace) {});
+    if (disposed) return;
+    serial = serial
+        .then((_) async {
+          if (disposed) return;
+          await task();
+        })
+        .catchError((error, stackTrace) {});
   }
 
   Timer? expirationTimer;
 
   void scheduleExpirationTick(Duration delay) {
+    if (disposed) return;
     expirationTimer?.cancel();
     expirationTimer = Timer(delay, () {
       schedule(() async {
+        if (disposed) return;
         final nowSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
         var nextDelayMs = 60000;
 
@@ -143,6 +152,7 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
   // Start a little after hydration so initial loads don't race the DB.
   scheduleExpirationTick(const Duration(seconds: 2));
   ref.onDispose(() {
+    disposed = true;
     expirationTimer?.cancel();
     expirationTimer = null;
   });
@@ -198,6 +208,7 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
   }
 
   Future<void> refreshInviteResponseSubscription() async {
+    if (disposed) return;
     final invites = await inviteDatasource.getActiveInvites();
     final ephs = <String>{};
 
@@ -221,6 +232,7 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
 
   // Subscribe for invite responses (and refresh when invites change).
   void requestInviteResponseSubscriptionRefresh() {
+    if (disposed) return;
     if (refreshScheduled) {
       refreshAgain = true;
       return;
@@ -241,14 +253,18 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
 
   requestInviteResponseSubscriptionRefresh();
   ref.listen<InviteState>(inviteStateProvider, (previous, next) {
+    if (disposed) return;
     requestInviteResponseSubscriptionRefresh();
   });
   ref.onDispose(() {
+    disposed = true;
     nostrService.closeSubscription(inviteResponsesSubId);
   });
 
   final sub = service.decryptedMessages.listen((message) {
+    if (disposed) return;
     schedule(() async {
+      if (disposed) return;
       final rumor = NostrRumor.tryParse(message.content);
       String? receiptSessionId;
       if (rumor != null) {
@@ -320,16 +336,17 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
         }
       }
 
-      final chatMessage = await ref
-          .read(chatStateProvider.notifier)
-          .receiveDecryptedMessage(
-            message.senderPubkeyHex,
-            message.content,
-            eventId: message.eventId,
-            createdAt: message.createdAt,
-          );
+      if (disposed) return;
+      final chatNotifier = ref.read(chatStateProvider.notifier);
+      final chatMessage = await chatNotifier.receiveDecryptedMessage(
+        message.senderPubkeyHex,
+        message.content,
+        eventId: message.eventId,
+        createdAt: message.createdAt,
+      );
 
       if (chatMessage == null) {
+        if (disposed) return;
         if (receiptSessionId != null) {
           await ref
               .read(sessionStateProvider.notifier)
@@ -338,6 +355,7 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
         return;
       }
 
+      if (disposed) return;
       final sessionNotifier = ref.read(sessionStateProvider.notifier);
       final session = await sessionNotifier.ensureSessionForRecipient(
         chatMessage.sessionId,
@@ -352,6 +370,7 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
   });
 
   final inviteSub = nostrService.events.listen((event) {
+    if (disposed) return;
     // Filter before scheduling: relays can deliver a high volume of events and
     // queueing no-op tasks here can explode memory if the DB stalls.
     if (event.kind != 1059) return;
@@ -360,6 +379,7 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
     if (event.subscriptionId != inviteResponsesSubId) return;
 
     schedule(() async {
+      if (disposed) return;
       final pTags = <String>{};
       for (final t in event.tags) {
         if (t.length < 2) continue;
