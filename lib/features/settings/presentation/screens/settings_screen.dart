@@ -9,6 +9,7 @@ import 'package:nostr/nostr.dart' as nostr;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../config/providers/auth_provider.dart';
+import '../../../../config/providers/app_version_provider.dart';
 import '../../../../config/providers/chat_provider.dart';
 import '../../../../config/providers/desktop_notification_provider.dart';
 import '../../../../config/providers/device_manager_provider.dart';
@@ -47,6 +48,7 @@ class SettingsScreen extends ConsumerWidget {
       desktopNotificationsSupportedProvider,
     );
     final mobilePushSupported = ref.watch(mobilePushSupportedProvider);
+    final appVersion = ref.watch(appVersionProvider);
     ref.watch(profileUpdatesProvider);
     final profileService = ref.watch(profileServiceProvider);
     final ownProfile = authState.pubkeyHex == null
@@ -533,10 +535,14 @@ class SettingsScreen extends ConsumerWidget {
 
           // About section
           const _SectionHeader(title: 'About'),
-          const ListTile(
-            leading: Icon(Icons.info),
-            title: Text('Version'),
-            subtitle: Text('2.6.2'),
+          ListTile(
+            leading: const Icon(Icons.info),
+            title: const Text('Version'),
+            subtitle: appVersion.when(
+              data: (version) => Text(version),
+              loading: () => const Text('Loading...'),
+              error: (error, stackTrace) => const Text('Unknown'),
+            ),
           ),
           ListTile(
             leading: const Icon(Icons.code),

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:iris_chat/config/providers/app_version_provider.dart';
 import 'package:iris_chat/config/providers/auth_provider.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/config/providers/desktop_notification_provider.dart';
@@ -333,6 +334,7 @@ void main() {
   });
 
   Widget buildSettingsScreen({
+    String appVersion = 'v2.6.4',
     String? pubkeyHex,
     bool isAuthenticated = true,
     bool isLinkedDevice = false,
@@ -363,6 +365,7 @@ void main() {
       nostrRelaySettingsServiceProvider.overrideWithValue(
         relayService ?? relaySettingsService,
       ),
+      appVersionProvider.overrideWith((ref) async => appVersion),
       authStateProvider.overrideWith((ref) {
         final notifier = AuthNotifier(mockAuthRepo);
         notifier.state = AuthState(
@@ -1059,7 +1062,7 @@ void main() {
 
         await tester.scrollUntilVisible(find.text('Version'), 300);
         expect(find.text('Version'), findsOneWidget);
-        expect(find.text('2.6.2'), findsOneWidget);
+        expect(find.text('v2.6.4'), findsOneWidget);
         expect(find.byIcon(Icons.info), findsOneWidget);
       });
 
