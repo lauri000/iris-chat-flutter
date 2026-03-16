@@ -23,7 +23,7 @@ import '../../../../config/providers/startup_launch_provider.dart';
 import '../../../../core/services/imgproxy_service.dart';
 import '../../../../core/services/nostr_relay_settings_service.dart';
 import '../../../../core/services/profile_service.dart';
-import '../../../../core/services/secure_storage_service.dart';
+import '../../../../core/services/session_manager_service.dart';
 import '../../../../shared/utils/formatters.dart';
 import '../../../../shared/widgets/image_viewer_modal.dart';
 import '../../../chat/presentation/widgets/chats_back_button.dart';
@@ -1203,7 +1203,8 @@ class SettingsScreen extends ConsumerWidget {
     ).showSnackBar(SnackBar(content: Text(error ?? successMessage)));
   }
 
-  Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
+  Future<void> _confirmLogout(BuildContext context, WidgetRef _) async {
+    final container = ProviderScope.containerOf(context, listen: false);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1226,18 +1227,20 @@ class SettingsScreen extends ConsumerWidget {
     );
 
     if ((confirmed ?? false) && context.mounted) {
-      await ref.read(databaseServiceProvider).deleteDatabase();
-      _invalidateChatProviders(ref);
-      await ref.read(authStateProvider.notifier).logout();
-      ref.invalidate(authRepositoryProvider);
-      ref.invalidate(secureStorageProvider);
+      _invalidateChatProviders(container);
+      container.invalidate(authRepositoryProvider);
+      container.invalidate(secureStorageProvider);
+      await container.read(authStateProvider.notifier).logout();
+      await _clearNdrStorage(container, invalidateProviders: false);
+      await container.read(databaseServiceProvider).deleteDatabase();
       if (context.mounted) {
         context.go('/login');
       }
     }
   }
 
-  Future<void> _confirmDeleteAll(BuildContext context, WidgetRef ref) async {
+  Future<void> _confirmDeleteAll(BuildContext context, WidgetRef _) async {
+    final container = ProviderScope.containerOf(context, listen: false);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1263,19 +1266,12 @@ class SettingsScreen extends ConsumerWidget {
     );
 
     if ((confirmed ?? false) && context.mounted) {
-      // Clear database
-      final dbService = ref.read(databaseServiceProvider);
-      await dbService.deleteDatabase();
-      _invalidateChatProviders(ref);
-
-      // Clear secure storage
-      final secureStorage = SecureStorageService();
-      await secureStorage.clearIdentity();
-
-      // Logout (clears auth state)
-      await ref.read(authStateProvider.notifier).logout();
-      ref.invalidate(authRepositoryProvider);
-      ref.invalidate(secureStorageProvider);
+      _invalidateChatProviders(container);
+      container.invalidate(authRepositoryProvider);
+      container.invalidate(secureStorageProvider);
+      await container.read(authStateProvider.notifier).logout();
+      await _clearNdrStorage(container, invalidateProviders: false);
+      await container.read(databaseServiceProvider).deleteDatabase();
 
       if (context.mounted) {
         context.go('/login');
@@ -1283,11 +1279,28 @@ class SettingsScreen extends ConsumerWidget {
     }
   }
 
-  void _invalidateChatProviders(WidgetRef ref) {
-    ref.invalidate(sessionStateProvider);
-    ref.invalidate(chatStateProvider);
-    ref.invalidate(groupStateProvider);
-    ref.invalidate(inviteStateProvider);
+  void _invalidateChatProviders(ProviderContainer container) {
+    container.invalidate(messageSubscriptionProvider);
+    container.invalidate(sessionManagerServiceProvider);
+    container.invalidate(sessionStateProvider);
+    container.invalidate(chatStateProvider);
+    container.invalidate(groupStateProvider);
+    container.invalidate(inviteStateProvider);
+  }
+
+  Future<void> _clearNdrStorage(
+    ProviderContainer container, {
+    bool invalidateProviders = true,
+  }) async {
+    // Invalidate providers first so native handles are disposed before wiping files.
+    if (invalidateProviders) {
+      _invalidateChatProviders(container);
+    }
+    try {
+      await SessionManagerService.clearPersistentStorage();
+    } catch (_) {
+      // Best-effort cleanup.
+    }
   }
 }
 

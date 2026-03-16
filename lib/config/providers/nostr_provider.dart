@@ -35,18 +35,21 @@ final nostrServiceProvider = Provider<NostrService>((ref) {
 final sessionManagerServiceProvider = Provider<SessionManagerService>((ref) {
   // Ensure this provider rebuilds when the authenticated identity/device changes
   // (e.g., login, linked-device login, key rotation).
-  ref.watch(
+  final authSnapshot = ref.watch(
     authStateProvider.select(
       (s) => (s.isAuthenticated, s.pubkeyHex, s.devicePubkeyHex),
     ),
   );
+  final isAuthenticated = authSnapshot.$1;
 
   final nostrService = ref.watch(nostrServiceProvider);
   final authRepository = ref.watch(authRepositoryProvider);
 
   final service = SessionManagerService(nostrService, authRepository);
 
-  unawaited(service.start().catchError((error, stackTrace) {}));
+  if (isAuthenticated) {
+    unawaited(service.start().catchError((error, stackTrace) {}));
+  }
 
   ref.onDispose(() {
     unawaited(service.dispose().catchError((error, stackTrace) {}));
