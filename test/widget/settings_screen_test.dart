@@ -44,7 +44,8 @@ class MockProfileService extends Mock implements ProfileService {}
 class FakeSessionManagerTeardown implements SessionManagerTeardown {
   FakeSessionManagerTeardown({this.onDisposeAndClear});
 
-  final Future<void> Function(SessionManagerService? service)? onDisposeAndClear;
+  final Future<void> Function(SessionManagerService? service)?
+  onDisposeAndClear;
   int callCount = 0;
   SessionManagerService? lastService;
 
@@ -517,7 +518,9 @@ void main() {
       messagingPreferencesServiceProvider.overrideWithValue(
         messagingPreferencesService,
       ),
-      imgproxySettingsServiceProvider.overrideWithValue(imgproxySettingsService),
+      imgproxySettingsServiceProvider.overrideWithValue(
+        imgproxySettingsService,
+      ),
       nostrRelaySettingsServiceProvider.overrideWithValue(relaySettingsService),
       appVersionProvider.overrideWith((ref) async => 'v2.6.6'),
       nostrConnectionStatusProvider.overrideWith(
@@ -1800,7 +1803,10 @@ void main() {
           );
           await tester.pumpAndSettle();
 
-          final deleteAllTile = find.widgetWithText(ListTile, 'Delete All Data');
+          final deleteAllTile = find.widgetWithText(
+            ListTile,
+            'Delete All Data',
+          );
           await tester.scrollUntilVisible(deleteAllTile, 300);
           await tester.tap(deleteAllTile);
           await tester.pumpAndSettle();
@@ -1875,7 +1881,7 @@ void main() {
         'logout does not re-run auth check while logout is in flight',
         (tester) async {
           final controlledAuthRepo = ControlledAuthRepository(
-            identity: Identity(pubkeyHex: testPubkeyHex),
+            identity: const Identity(pubkeyHex: testPubkeyHex),
           );
           final fakeTeardown = FakeSessionManagerTeardown();
           when(() => mockDbService.deleteDatabase()).thenAnswer((_) async {});

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:iris_chat/config/providers/app_bootstrap_provider.dart';
 import 'package:iris_chat/config/providers/auth_provider.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/config/providers/invite_provider.dart';
@@ -93,11 +94,13 @@ ProviderContainer _makeContainer({
 
         final nostr = ref.watch(nostrServiceProvider);
         final auth = ref.watch(authRepositoryProvider);
+        final messageDatasource = ref.watch(messageDatasourceProvider);
 
         final svc = SessionManagerService(
           nostr,
           auth,
           storagePathOverride: ndrPath,
+          hasProcessedMessageEventId: messageDatasource.messageExists,
         );
 
         unawaited(svc.start());
@@ -658,11 +661,24 @@ Future<void> _handleCommand({
           // Mirror app bootstrap for linked-device login so invite/session
           // transport is fully republished before interop assertions run.
           await container.read(sessionStateProvider.notifier).loadSessions();
+          final sessionManager = container.read(sessionManagerServiceProvider);
+          await sessionManager.setupUsers(
+            sessionBootstrapTargets(
+              sessionRecipientPubkeysHex: container
+                  .read(sessionStateProvider)
+                  .sessions
+                  .map((session) => session.recipientPubkeyHex),
+              ownerPubkeyHex: sessionManager.ownerPubkeyHex,
+            ),
+          );
           await container.read(inviteStateProvider.notifier).loadInvites();
           await container
               .read(inviteStateProvider.notifier)
-              .ensurePublishedPublicInvite();
+              .bootstrapInviteResponsesFromRelay();
           container.read(messageSubscriptionProvider);
+          await container
+              .read(inviteStateProvider.notifier)
+              .ensurePublishedPublicInvite();
 
           final authState = container.read(authStateProvider);
           if (!authState.isAuthenticated || authState.pubkeyHex == null) {
@@ -759,6 +775,50 @@ Future<void> _handleCommand({
         await ok({
           'connectedCount': nostrService.connectedCount,
           'connectionStatus': nostrService.connectionStatus,
+        });
+        return;
+
+      case 'get_debug_state':
+        final authState = container.read(authStateProvider);
+        final sessions = container.read(sessionStateProvider).sessions;
+        final messagesBySession = container.read(chatStateProvider).messages;
+        final sessionManager = container.read(sessionManagerServiceProvider);
+        final totalNativeSessions = await sessionManager.getTotalSessions();
+        final nostrDebug = container.read(nostrServiceProvider).debugSnapshot();
+        final sessionManagerDebug = sessionManager.debugSnapshot();
+
+        await ok({
+          'auth': {
+            'isAuthenticated': authState.isAuthenticated,
+            'ownerPubkeyHex': authState.pubkeyHex,
+            'devicePubkeyHex': authState.devicePubkeyHex,
+          },
+          'totalNativeSessions': totalNativeSessions,
+          'nostr': nostrDebug,
+          'sessionManager': sessionManagerDebug,
+          'sessions': [
+            for (final session in sessions)
+              {
+                'id': session.id,
+                'recipientPubkeyHex': session.recipientPubkeyHex,
+                'createdAt': session.createdAt.toIso8601String(),
+                'isInitiator': session.isInitiator,
+              },
+          ],
+          'messages': {
+            for (final entry in messagesBySession.entries)
+              entry.key: [
+                for (final message in entry.value)
+                  {
+                    'id': message.id,
+                    'text': message.text,
+                    'isIncoming': message.isIncoming,
+                    'status': message.status.name,
+                    'eventId': message.eventId,
+                    'rumorId': message.rumorId,
+                  },
+              ],
+          },
         });
         return;
 
@@ -1265,15 +1325,18 @@ void main() {
         isTrue,
         reason: authState.error ?? 'Bridge auth failed',
       );
+      // Start invite/message bridge wiring.
+      container.read(messageSubscriptionProvider);
+
       await container
           .read(inviteStateProvider.notifier)
           .ensurePublishedPublicInvite();
 
-      // Start invite/message bridge wiring.
-      container.read(messageSubscriptionProvider);
-
       await container.read(sessionStateProvider.notifier).loadSessions();
       await container.read(inviteStateProvider.notifier).loadInvites();
+      await container
+          .read(inviteStateProvider.notifier)
+          .bootstrapInviteResponsesFromRelay();
 
       final authStateSnapshot = container.read(authStateProvider);
       final pubkeyHex = authStateSnapshot.pubkeyHex;

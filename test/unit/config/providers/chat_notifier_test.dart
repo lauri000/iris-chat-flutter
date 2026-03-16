@@ -1,8 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
+import 'package:iris_chat/core/ffi/models/send_text_with_inner_id_result.dart';
 import 'package:iris_chat/core/services/app_focus_service.dart';
 import 'package:iris_chat/core/services/desktop_notification_service.dart';
 import 'package:iris_chat/core/services/inbound_activity_policy.dart';
+import 'package:iris_chat/core/services/logger_service.dart';
 import 'package:iris_chat/core/services/session_manager_service.dart';
 import 'package:iris_chat/features/chat/data/datasources/message_local_datasource.dart';
 import 'package:iris_chat/features/chat/data/datasources/session_local_datasource.dart';
@@ -63,6 +65,7 @@ void main() {
   late MockSessionManagerService mockSessionManagerService;
   late FakeDesktopNotificationService fakeDesktopNotificationService;
   late FakeAppFocusState fakeAppFocusState;
+  late bool previousLoggerEnabled;
 
   setUp(() {
     mockMessageDatasource = MockMessageLocalDatasource();
@@ -80,9 +83,22 @@ void main() {
         appOpenedAt: DateTime.fromMillisecondsSinceEpoch(0),
       ),
     );
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
+    when(
+      () => mockSessionManagerService.setupUsers(any()),
+    ).thenAnswer((_) async {});
+    when(
+      () => mockSessionManagerService.bootstrapUsersFromRelay(any()),
+    ).thenAnswer((_) async {});
+    when(() => mockSessionManagerService.ownerPubkeyHex).thenReturn(null);
+    when(() => mockSessionManagerService.devicePubkeyHex).thenReturn(null);
   });
 
   setUpAll(() {
+    previousLoggerEnabled = Logger.enabled;
+    Logger.enabled = false;
     registerFallbackValue(
       ChatMessage(
         id: 'fallback',
@@ -102,6 +118,10 @@ void main() {
       ),
     );
     registerFallbackValue(MessageStatus.pending);
+  });
+
+  tearDownAll(() {
+    Logger.enabled = previousLoggerEnabled;
   });
 
   group('ChatNotifier', () {
@@ -755,14 +775,66 @@ void main() {
             ),
           );
           verifyNever(
-            () =>
-                mockMessageDatasource.updateIncomingStatusByRumorId(any(), any()),
+            () => mockMessageDatasource.updateIncomingStatusByRumorId(
+              any(),
+              any(),
+            ),
           );
         },
       );
     });
 
     group('receiveDecryptedMessage', () {
+      test(
+        'arms peer setup using resolved owner pubkey for linked sender',
+        () async {
+          const ourOwnerPubkey =
+              '1111111111111111111111111111111111111111111111111111111111111111';
+          const peerOwnerPubkey =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+          const peerLinkedDevicePubkey =
+              '3333333333333333333333333333333333333333333333333333333333333333';
+
+          when(
+            () => mockSessionManagerService.ownerPubkeyHex,
+          ).thenReturn(ourOwnerPubkey);
+          when(
+            () => mockMessageDatasource.messageExists(any()),
+          ).thenAnswer((_) async => false);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(any()),
+          ).thenAnswer((_) async => null);
+          when(
+            () => mockSessionDatasource.saveSession(any()),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockMessageDatasource.saveMessage(any()),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockSessionManagerService.sendReceipt(
+              recipientPubkeyHex: any(named: 'recipientPubkeyHex'),
+              receiptType: any(named: 'receiptType'),
+              messageIds: any(named: 'messageIds'),
+            ),
+          ).thenAnswer((_) async {});
+
+          const rumorJson =
+              '{"id":"linked-msg-1","pubkey":"$peerOwnerPubkey","created_at":1700000001,"kind":14,"content":"hello from linked device","tags":[["p","$ourOwnerPubkey"]]}';
+
+          final received = await notifier.receiveDecryptedMessage(
+            peerLinkedDevicePubkey,
+            rumorJson,
+          );
+          await Future<void>.delayed(Duration.zero);
+
+          expect(received, isNotNull);
+          expect(received!.sessionId, peerOwnerPubkey);
+          verify(
+            () => mockSessionManagerService.setupUser(peerOwnerPubkey),
+          ).called(1);
+        },
+      );
+
       test('does not notify for messages created before app launch', () async {
         const peerPubkey =
             '2222222222222222222222222222222222222222222222222222222222222222';
@@ -1604,6 +1676,43 @@ void main() {
           ).called(1);
         },
       );
+    });
+
+    group('sendMessage bootstrap', () {
+      test('send does not replay relay bootstrap during dispatch', () async {
+        final session = ChatSession(
+          id: 'session-1',
+          recipientPubkeyHex:
+              'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          createdAt: DateTime.now(),
+        );
+
+        when(
+          () => mockSessionDatasource.getSession('session-1'),
+        ).thenAnswer((_) async => session);
+        when(
+          () => mockSessionManagerService.sendTextWithInnerId(
+            recipientPubkeyHex: session.recipientPubkeyHex,
+            text: 'hello',
+            expiresAtSeconds: any(named: 'expiresAtSeconds'),
+          ),
+        ).thenAnswer(
+          (_) async => const SendTextWithInnerIdResult(
+            innerId: 'rumor-1',
+            outerEventIds: ['outer-1'],
+          ),
+        );
+
+        await notifier.sendMessage('session-1', 'hello');
+
+        verifyNever(
+          () => mockSessionManagerService.setupUser(session.recipientPubkeyHex),
+        );
+        verifyNever(
+          () => mockSessionManagerService.bootstrapUsersFromRelay(any()),
+        );
+        verifyNever(() => mockSessionManagerService.setupUsers(any()));
+      });
     });
   });
 }

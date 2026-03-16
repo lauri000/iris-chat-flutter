@@ -25,6 +25,7 @@ class TestInviteNotifier extends InviteNotifier {
     String? label,
     int? maxUses,
     bool publishToRelays = false,
+    bool defaultToSingleUse = true,
   }) async {
     // Avoid calling NdrFfi in widget tests; CreateInviteScreen should still
     // behave as if an invite was created successfully.
@@ -33,7 +34,7 @@ class TestInviteNotifier extends InviteNotifier {
       inviterPubkeyHex: testPubkeyHex,
       label: label,
       createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-      maxUses: maxUses ?? 1,
+      maxUses: maxUses ?? (defaultToSingleUse ? 1 : null),
       serializedState: 'test-serialized-state',
     );
 

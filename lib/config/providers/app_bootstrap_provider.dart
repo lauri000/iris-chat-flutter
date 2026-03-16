@@ -7,6 +7,43 @@ import 'chat_provider.dart';
 import 'invite_provider.dart';
 import 'nostr_provider.dart';
 
+List<String> sessionBootstrapTargets({
+  required Iterable<String> sessionRecipientPubkeysHex,
+  String? ownerPubkeyHex,
+}) {
+  final targets = <String>[];
+  final seen = <String>{};
+
+  void addTarget(String? raw) {
+    final normalized = raw?.trim().toLowerCase() ?? '';
+    if (normalized.isEmpty || !seen.add(normalized)) return;
+    targets.add(normalized);
+  }
+
+  for (final recipientPubkeyHex in sessionRecipientPubkeysHex) {
+    addTarget(recipientPubkeyHex);
+  }
+  addTarget(ownerPubkeyHex);
+
+  return targets;
+}
+
+Future<List<String>> sessionRelayBootstrapTargets({
+  required Iterable<String> bootstrapTargets,
+  required Future<String?> Function(String peerPubkeyHex) getActiveSessionState,
+}) async {
+  final targetsNeedingRelayBootstrap = <String>[];
+
+  for (final target in bootstrapTargets) {
+    final activeSessionState = await getActiveSessionState(target);
+    if (activeSessionState == null || activeSessionState.isEmpty) {
+      targetsNeedingRelayBootstrap.add(target);
+    }
+  }
+
+  return targetsNeedingRelayBootstrap;
+}
+
 class AppBootstrapState {
   const AppBootstrapState({
     this.isLoading = false,
@@ -85,6 +122,25 @@ class AppBootstrapNotifier extends StateNotifier<AppBootstrapState> {
     state = state.copyWith(isLoading: true, isReady: false, clearError: true);
 
     try {
+      Future<void> bootstrapCurrentSessions() async {
+        final sessionManager = ref.read(sessionManagerServiceProvider);
+        final bootstrapTargets = sessionBootstrapTargets(
+          sessionRecipientPubkeysHex: ref
+              .read(sessionStateProvider)
+              .sessions
+              .map((session) => session.recipientPubkeyHex),
+          ownerPubkeyHex: sessionManager.ownerPubkeyHex,
+        );
+        await sessionManager.setupUsers(bootstrapTargets);
+        final relayBootstrapTargets = await sessionRelayBootstrapTargets(
+          bootstrapTargets: bootstrapTargets,
+          getActiveSessionState: sessionManager.getActiveSessionState,
+        );
+        if (relayBootstrapTargets.isNotEmpty) {
+          await sessionManager.bootstrapUsersFromRelay(relayBootstrapTargets);
+        }
+      }
+
       final deadline = DateTime.now().add(_kMaxWait);
       while (mounted && runId == _runId) {
         await ref.read(sessionStateProvider.notifier).loadSessions();
@@ -109,17 +165,36 @@ class AppBootstrapNotifier extends StateNotifier<AppBootstrapState> {
       if (!mounted || runId != _runId) return;
 
       try {
-        await ref
-            .read(sessionManagerServiceProvider)
-            .setupUsers(
-              ref
-                  .read(sessionStateProvider)
-                  .sessions
-                  .map((session) => session.recipientPubkeyHex),
-            );
+        await bootstrapCurrentSessions();
       } catch (_) {}
 
       await ref.read(inviteStateProvider.notifier).loadInvites();
+      try {
+        await ref
+            .read(inviteStateProvider.notifier)
+            .bootstrapInviteResponsesFromRelay();
+      } catch (_) {}
+      try {
+        await ref.read(sessionStateProvider.notifier).loadSessions();
+        await bootstrapCurrentSessions();
+        final sessionManager = ref.read(sessionManagerServiceProvider);
+        final bootstrapTargets = sessionBootstrapTargets(
+          sessionRecipientPubkeysHex: ref
+              .read(sessionStateProvider)
+              .sessions
+              .map((session) => session.recipientPubkeyHex),
+          ownerPubkeyHex: sessionManager.ownerPubkeyHex,
+        );
+        await sessionManager.refreshSubscription();
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        await sessionManager.repairRecentlyActiveLinkedDeviceRecords(
+          bootstrapTargets,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        await sessionManager.repairRecentlyActiveLinkedDeviceRecords(
+          bootstrapTargets,
+        );
+      } catch (_) {}
       try {
         ref.read(messageSubscriptionProvider);
       } catch (_) {}

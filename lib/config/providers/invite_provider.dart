@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +11,7 @@ import '../../core/services/error_service.dart';
 import '../../core/services/logger_service.dart';
 import '../../core/services/nostr_service.dart';
 import '../../core/utils/app_keys_event_fetch.dart';
+import '../../core/utils/invite_response_subscription.dart';
 import '../../core/utils/invite_url.dart';
 import '../../features/chat/domain/models/session.dart';
 import '../../features/invite/data/datasources/invite_local_datasource.dart';
@@ -20,6 +22,13 @@ import 'device_manager_provider.dart';
 import 'nostr_provider.dart';
 
 part 'invite_provider.freezed.dart';
+
+int? effectiveInviteMaxUses({
+  required int? requestedMaxUses,
+  bool defaultToSingleUse = true,
+}) {
+  return requestedMaxUses ?? (defaultToSingleUse ? 1 : null);
+}
 
 /// State for invites.
 @freezed
@@ -63,6 +72,7 @@ class InviteNotifier extends StateNotifier<InviteState> {
     String? label,
     int? maxUses,
     bool publishToRelays = false,
+    bool defaultToSingleUse = true,
   }) async {
     state = state.copyWith(isCreating: true, error: null);
     InviteHandle? inviteHandle;
@@ -80,8 +90,12 @@ class InviteNotifier extends StateNotifier<InviteState> {
       }
       final devicePubkeyHex = await NdrFfi.derivePublicKey(devicePrivkeyHex);
 
-      // Default to single-use chat invites to avoid replay/duplicate session creation.
-      final effectiveMaxUses = maxUses ?? 1;
+      // Most chat invites should stay single-use, but the app's long-lived
+      // public invite must explicitly keep `maxUses` unlimited across restarts.
+      final effectiveMaxUses = effectiveInviteMaxUses(
+        requestedMaxUses: maxUses,
+        defaultToSingleUse: defaultToSingleUse,
+      );
 
       // Create invite using ndr-ffi
       inviteHandle = await NdrFfi.createInvite(
@@ -116,6 +130,8 @@ class InviteNotifier extends StateNotifier<InviteState> {
         isCreating: false,
       );
 
+      await _refreshInviteResponseSubscription();
+
       if (publishToRelays) {
         await _publishInviteToRelays(
           serializedState: serializedState,
@@ -144,21 +160,10 @@ class InviteNotifier extends StateNotifier<InviteState> {
     final devicePrivkeyHex = await authRepo.getPrivateKey();
     if (devicePrivkeyHex == null || devicePrivkeyHex.isEmpty) return;
 
-    if (authState.hasOwnerKey) {
-      final ownerPubkeyHex = authState.pubkeyHex!;
-      final devicePubkeyHex = await NdrFfi.derivePublicKey(devicePrivkeyHex);
-      final ownerPrivkeyHex = await authRepo.getOwnerPrivateKey();
-      if (ownerPrivkeyHex == null || ownerPrivkeyHex.isEmpty) return;
-      await _publishMergedAppKeys(
-        ownerPubkeyHex: ownerPubkeyHex,
-        ownerPrivkeyHex: ownerPrivkeyHex,
-        devicePubkeysToEnsure: {devicePubkeyHex},
-      );
-    }
-
     Invite? inviteToPublish;
     final existingInvites = await _datasource.getActiveInvites();
     for (final invite in existingInvites) {
+      if (invite.maxUses != null) continue;
       if (invite.serializedState == null || invite.serializedState!.isEmpty) {
         continue;
       }
@@ -166,10 +171,14 @@ class InviteNotifier extends StateNotifier<InviteState> {
       break;
     }
 
-    inviteToPublish ??= await createInvite();
+    inviteToPublish ??= await createInvite(
+      maxUses: null,
+      defaultToSingleUse: false,
+    );
 
     final serializedState = inviteToPublish?.serializedState;
     if (serializedState != null && serializedState.isNotEmpty) {
+      await _refreshInviteResponseSubscription();
       await _publishInviteToRelays(
         serializedState: serializedState,
         signerPrivkeyHex: devicePrivkeyHex,
@@ -227,6 +236,101 @@ class InviteNotifier extends StateNotifier<InviteState> {
       try {
         await inviteHandle?.dispose();
       } catch (_) {}
+    }
+  }
+
+  Future<void> _refreshInviteResponseSubscription() async {
+    try {
+      await refreshInviteResponseSubscription(
+        nostrService: _ref.read(nostrServiceProvider),
+        inviteDatasource: _datasource,
+        subscriptionId: appInviteResponsesSubId,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> bootstrapInviteResponsesFromRelay({
+    Duration timeout = const Duration(seconds: 1),
+  }) async {
+    final inviteIdsByEphemeralPubkey = <String, String>{};
+    final activeInvites = await _datasource.getActiveInvites();
+    for (final invite in activeInvites) {
+      final serialized = invite.serializedState;
+      if (serialized == null || serialized.isEmpty) continue;
+      final eph = await resolveInviteEphemeralPubkey(serialized);
+      if (eph == null || eph.isEmpty) continue;
+      inviteIdsByEphemeralPubkey[eph] = invite.id;
+    }
+
+    if (inviteIdsByEphemeralPubkey.isEmpty) return;
+
+    final nostrService = _ref.read(nostrServiceProvider);
+    final subscriptionId =
+        'invite-response-bootstrap-${DateTime.now().microsecondsSinceEpoch}';
+    final seenEventIds = <String>{};
+    final matchingEvents = <NostrEvent>[];
+    var completed = false;
+    Timer? settleTimer;
+    late final StreamSubscription<NostrEvent> sub;
+
+    Future<List<NostrEvent>> finish() async {
+      if (!completed) {
+        completed = true;
+        settleTimer?.cancel();
+        await sub.cancel();
+        nostrService.closeSubscription(subscriptionId);
+      }
+
+      matchingEvents.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      return matchingEvents;
+    }
+
+    final completer = Completer<List<NostrEvent>>();
+    void scheduleFinish() {
+      if (completed) return;
+      settleTimer?.cancel();
+      settleTimer = Timer(const Duration(milliseconds: 100), () async {
+        if (completer.isCompleted) return;
+        completer.complete(await finish());
+      });
+    }
+
+    sub = nostrService.events.listen((event) {
+      if (event.subscriptionId != subscriptionId) return;
+      if (event.kind != 1059) return;
+
+      final matchesKnownInvite = event.tags.any(
+        (tag) =>
+            tag.length >= 2 &&
+            tag[0] == 'p' &&
+            inviteIdsByEphemeralPubkey.containsKey(tag[1]),
+      );
+      if (!matchesKnownInvite || !seenEventIds.add(event.id)) return;
+
+      matchingEvents.add(event);
+      scheduleFinish();
+    });
+
+    nostrService.subscribeWithIdRaw(subscriptionId, <String, dynamic>{
+      'kinds': const [1059],
+      '#p': inviteIdsByEphemeralPubkey.keys.toList()..sort(),
+      'limit': 200,
+    });
+
+    Timer(timeout, () async {
+      if (completer.isCompleted) return;
+      completer.complete(await finish());
+    });
+
+    final replayedEvents = await completer.future;
+    for (final event in replayedEvents) {
+      for (final tag in event.tags) {
+        if (tag.length < 2 || tag[0] != 'p') continue;
+        final inviteId = inviteIdsByEphemeralPubkey[tag[1]];
+        if (inviteId == null) continue;
+        await handleInviteResponse(inviteId, jsonEncode(event.toJson()));
+        break;
+      }
     }
   }
 
@@ -346,6 +450,12 @@ class InviteNotifier extends StateNotifier<InviteState> {
         devicePubkeysToEnsure: {devicePubkeyHex, linkedDevicePubkeyHex},
       );
 
+      // Re-bootstrap the owner's own device graph now that AppKeys includes the
+      // newly linked device, so current invite/session subscriptions cover it
+      // across later restarts.
+      await sessionManager.setupUser(ownerPubkeyHex);
+      await sessionManager.bootstrapUsersFromRelay([ownerPubkeyHex]);
+
       // Best-effort refresh so the local SessionManager can learn about the new device quickly.
       await _ref.read(sessionManagerServiceProvider).refreshSubscription();
 
@@ -383,6 +493,7 @@ class InviteNotifier extends StateNotifier<InviteState> {
           final replacement = await createInvite(
             label: invite?.label,
             maxUses: invite?.maxUses,
+            defaultToSingleUse: invite?.maxUses != null,
           );
           if (replacement?.serializedState == null) return null;
 
@@ -496,20 +607,36 @@ class InviteNotifier extends StateNotifier<InviteState> {
         await sessionNotifier.addSession(session);
       }
 
-      // SessionManager has no inviter-side "process response" API yet, so
-      // import the freshly derived session state on each accepted response.
-      //
-      // This keeps sender subscriptions fresh when a peer rotates/refreshes sessions,
-      // including self-chat interop where a session row may already exist.
-      //
-      // Interop note: invite responses from some clients omit/repurpose `deviceId`.
-      // `inviteePubkeyHex` is the sender identity used for session event authors.
-      final remoteDeviceId = result.inviteePubkeyHex;
-      await sessionManager.importSessionState(
-        peerPubkeyHex: recipientOwnerPubkey,
-        stateJson: sessionState,
-        deviceId: remoteDeviceId,
+      final remoteDeviceId = result.remoteDeviceId;
+      final normalizedRecipientOwnerPubkey = _normalizeDevicePubkeyHex(
+        recipientOwnerPubkey,
       );
+      final normalizedRemoteDeviceId = _normalizeDevicePubkeyHex(remoteDeviceId);
+
+      // Owner-level active-session checks are only safe for owner-device responses.
+      // Linked-device responses must still be imported so the native manager can
+      // attach state to that specific remote device record.
+      final isOwnerDeviceResponse =
+          normalizedRecipientOwnerPubkey != null &&
+          normalizedRecipientOwnerPubkey == normalizedRemoteDeviceId;
+      var shouldImportSessionState = !isOwnerDeviceResponse;
+      if (!shouldImportSessionState) {
+        final activeSessionState = await sessionManager.getActiveSessionState(
+          recipientOwnerPubkey,
+        );
+        shouldImportSessionState =
+            activeSessionState == null ||
+            activeSessionState.isEmpty ||
+            !_sessionStateHasReceivingCapability(activeSessionState);
+      }
+
+      if (shouldImportSessionState) {
+        await sessionManager.importSessionState(
+          peerPubkeyHex: recipientOwnerPubkey,
+          stateJson: sessionState,
+          deviceId: remoteDeviceId,
+        );
+      }
 
       // Mark invite as used
       await _datasource.markUsed(inviteId, recipientOwnerPubkey);
@@ -574,6 +701,28 @@ class InviteNotifier extends StateNotifier<InviteState> {
     return normalized;
   }
 
+  static bool _sessionStateHasReceivingCapability(String stateJson) {
+    try {
+      final decoded = jsonDecode(stateJson);
+      if (decoded is! Map<String, dynamic>) return false;
+
+      final receivingChainKey =
+          decoded['receiving_chain_key'] ?? decoded['receivingChainKey'];
+      final theirCurrent =
+          decoded['their_current_nostr_public_key'] ??
+          decoded['theirCurrentNostrPublicKey'];
+      final receivingNumber =
+          decoded['receiving_chain_message_number'] ??
+          decoded['receivingChainMessageNumber'];
+
+      return receivingChainKey != null ||
+          theirCurrent != null ||
+          (receivingNumber is num && receivingNumber.toInt() > 0);
+    } catch (_) {
+      return false;
+    }
+  }
+
   static void _upsertDeviceCreatedAt(
     Map<String, int> devices, {
     required String identityPubkeyHex,
@@ -634,14 +783,15 @@ class InviteNotifier extends StateNotifier<InviteState> {
     required Set<String> devicePubkeysToEnsure,
   }) async {
     final nostrService = _ref.read(nostrServiceProvider);
+    final localDevices = _ref.read(deviceManagerProvider).devices;
 
-    final existing = await _fetchLatestAppKeysEvent(
+    final existing = await _fetchLatestAppKeysEventWithRetry(
       nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
+      retry: localDevices.isEmpty,
     );
 
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final localDevices = _ref.read(deviceManagerProvider).devices;
     final relayDevices = <FfiDeviceEntry>[];
     if (existing != null) {
       relayDevices.addAll(
@@ -678,6 +828,26 @@ class InviteNotifier extends StateNotifier<InviteState> {
       ownerPubkeyHex: ownerPubkeyHex,
       timeout: timeout,
       subscriptionLabel: 'appkeys-fetch',
+    );
+  }
+
+  Future<NostrEvent?> _fetchLatestAppKeysEventWithRetry(
+    NostrService nostrService, {
+    required String ownerPubkeyHex,
+    required bool retry,
+  }) async {
+    final first = await _fetchLatestAppKeysEvent(
+      nostrService,
+      ownerPubkeyHex: ownerPubkeyHex,
+      timeout: retry ? const Duration(seconds: 1) : const Duration(seconds: 2),
+    );
+    if (first != null || !retry) return first;
+
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    return _fetchLatestAppKeysEvent(
+      nostrService,
+      ownerPubkeyHex: ownerPubkeyHex,
+      timeout: const Duration(seconds: 1),
     );
   }
 

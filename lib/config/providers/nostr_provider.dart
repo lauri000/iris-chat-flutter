@@ -3,11 +3,10 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/ffi/ndr_ffi.dart';
 import '../../core/services/nostr_service.dart';
 import '../../core/services/profile_service.dart';
 import '../../core/services/session_manager_service.dart';
-import '../../core/utils/invite_url.dart';
+import '../../core/utils/invite_response_subscription.dart' as invite_response;
 import '../../core/utils/nostr_rumor.dart';
 import '../../features/chat/domain/utils/chat_settings.dart';
 import 'auth_provider.dart';
@@ -58,8 +57,13 @@ final sessionManagerServiceProvider = Provider<SessionManagerService>((ref) {
 
   final nostrService = ref.watch(nostrServiceProvider);
   final authRepository = ref.watch(authRepositoryProvider);
+  final messageDatasource = ref.watch(messageDatasourceProvider);
 
-  final service = SessionManagerService(nostrService, authRepository);
+  final service = SessionManagerService(
+    nostrService,
+    authRepository,
+    hasProcessedMessageEventId: messageDatasource.messageExists,
+  );
 
   if (isAuthenticated) {
     unawaited(service.start().catchError((error, stackTrace) {}));
@@ -86,7 +90,6 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
   final groupDatasource = ref.watch(groupDatasourceProvider);
   final groupMessageDatasource = ref.watch(groupMessageDatasourceProvider);
 
-  const inviteResponsesSubId = 'app-invite-responses';
   const groupSenderKeyDistributionKind = 10446;
   var disposed = false;
 
@@ -183,72 +186,13 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
   var refreshScheduled = false;
   var refreshAgain = false;
 
-  Future<String?> resolveInviteEphemeralPubkey(String serializedState) async {
-    // Best-effort extract from stored JSON first.
-    try {
-      final decoded = jsonDecode(serializedState);
-      if (decoded is Map<String, dynamic>) {
-        final candidates = <Object?>[
-          decoded['ephemeralKey'],
-          decoded['inviterEphemeralPublicKey'],
-          decoded['inviterEphemeralPublicKeyHex'],
-          decoded['inviterEphemeralPubkeyHex'],
-          decoded['inviter_ephemeral_public_key'],
-          decoded['inviter_ephemeral_public_key_hex'],
-          decoded['inviter_ephemeral_pubkey_hex'],
-        ];
-        for (final c in candidates) {
-          if (c is String && c.isNotEmpty) return c;
-        }
-      }
-    } catch (_) {}
-
-    // Fallback: roundtrip through native invite -> URL and read fragment.
-    InviteHandle? handle;
-    try {
-      handle = await NdrFfi.inviteDeserialize(serializedState);
-      final url = await handle.toUrl('https://iris.to');
-      final data = decodeInviteUrlData(url);
-      final eph =
-          data?['ephemeralKey'] ??
-          data?['inviterEphemeralPublicKey'] ??
-          data?['inviterEphemeralPublicKeyHex'] ??
-          data?['inviterEphemeralPubkeyHex'] ??
-          data?['inviter_ephemeral_public_key'] ??
-          data?['inviter_ephemeral_public_key_hex'] ??
-          data?['inviter_ephemeral_pubkey_hex'];
-      if (eph is String && eph.isNotEmpty) return eph;
-    } catch (_) {
-      // Ignore; invite state may be malformed or native may be unavailable.
-    } finally {
-      try {
-        await handle?.dispose();
-      } catch (_) {}
-    }
-    return null;
-  }
-
   Future<void> refreshInviteResponseSubscription() async {
     if (disposed) return;
-    final invites = await inviteDatasource.getActiveInvites();
-    final ephs = <String>{};
-
-    for (final invite in invites) {
-      final serialized = invite.serializedState;
-      if (serialized == null || serialized.isEmpty) continue;
-      final eph = await resolveInviteEphemeralPubkey(serialized);
-      if (eph != null && eph.isNotEmpty) ephs.add(eph);
-    }
-
-    if (ephs.isEmpty) {
-      nostrService.closeSubscription(inviteResponsesSubId);
-      return;
-    }
-
-    nostrService.subscribeWithIdRaw(inviteResponsesSubId, <String, dynamic>{
-      'kinds': const [1059],
-      '#p': ephs.toList(),
-    });
+    await invite_response.refreshInviteResponseSubscription(
+      nostrService: nostrService,
+      inviteDatasource: inviteDatasource,
+      subscriptionId: invite_response.appInviteResponsesSubId,
+    );
   }
 
   // Subscribe for invite responses (and refresh when invites change).
@@ -279,7 +223,7 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
   });
   ref.onDispose(() {
     disposed = true;
-    nostrService.closeSubscription(inviteResponsesSubId);
+    nostrService.closeSubscription(invite_response.appInviteResponsesSubId);
   });
 
   final sub = service.decryptedMessages.listen((message) {
@@ -395,9 +339,6 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
     // Filter before scheduling: relays can deliver a high volume of events and
     // queueing no-op tasks here can explode memory if the DB stalls.
     if (event.kind != 1059) return;
-    // Only consider events delivered by our invite-response subscription.
-    // Other subscriptions (sessions, app-keys, etc.) can also carry kind 1059.
-    if (event.subscriptionId != inviteResponsesSubId) return;
 
     schedule(() async {
       if (disposed) return;
@@ -413,9 +354,8 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
         if (invite.serializedState == null) continue;
         try {
           final serialized = invite.serializedState!;
-          final ephemeralPubkey = await resolveInviteEphemeralPubkey(
-            serialized,
-          );
+          final ephemeralPubkey = await invite_response
+              .resolveInviteEphemeralPubkey(serialized);
           if (ephemeralPubkey == null || ephemeralPubkey.isEmpty) continue;
           if (!pTags.contains(ephemeralPubkey)) continue;
 

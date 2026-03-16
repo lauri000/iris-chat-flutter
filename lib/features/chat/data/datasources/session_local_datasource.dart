@@ -52,10 +52,19 @@ class SessionLocalDatasource {
   /// Insert or update a session.
   Future<void> saveSession(ChatSession session) async {
     final db = await _db;
+    final values = _sessionToMap(session);
+    final updated = await db.update(
+      'sessions',
+      values,
+      where: 'id = ?',
+      whereArgs: [session.id],
+    );
+    if (updated != 0) return;
+
     await db.insert(
       'sessions',
-      _sessionToMap(session),
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      values,
+      conflictAlgorithm: ConflictAlgorithm.ignore,
     );
   }
 

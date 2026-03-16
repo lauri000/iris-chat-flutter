@@ -26,8 +26,39 @@ Future<List<NostrEvent>> fetchLatestDeviceInviteEvents(
 
   final subid = '$subscriptionLabel-${DateTime.now().microsecondsSinceEpoch}';
   final bestByAuthor = <String, NostrEvent>{};
+  var completed = false;
+  Timer? settleTimer;
+  late final StreamSubscription<NostrEvent> sub;
 
-  final sub = nostrService.events.listen((event) {
+  Future<List<NostrEvent>> finish() async {
+    if (completed) {
+      return orderedPubkeys
+          .map((pubkey) => bestByAuthor[pubkey])
+          .whereType<NostrEvent>()
+          .toList(growable: false);
+    }
+
+    completed = true;
+    settleTimer?.cancel();
+    await sub.cancel();
+    nostrService.closeSubscription(subid);
+    return orderedPubkeys
+        .map((pubkey) => bestByAuthor[pubkey])
+        .whereType<NostrEvent>()
+        .toList(growable: false);
+  }
+
+  final completer = Completer<List<NostrEvent>>();
+  void scheduleFinish() {
+    if (completed) return;
+    settleTimer?.cancel();
+    settleTimer = Timer(const Duration(milliseconds: 100), () async {
+      if (completer.isCompleted) return;
+      completer.complete(await finish());
+    });
+  }
+
+  sub = nostrService.events.listen((event) {
     if (event.subscriptionId != subid) return;
     if (event.kind != _inviteEventKind) return;
 
@@ -42,24 +73,22 @@ Future<List<NostrEvent>> fetchLatestDeviceInviteEvents(
     if (existing == null || event.createdAt >= existing.createdAt) {
       bestByAuthor[author] = event;
     }
+    scheduleFinish();
   });
 
-  try {
-    nostrService.subscribeWithId(
-      subid,
-      NostrFilter(
-        kinds: const [_inviteEventKind],
-        authors: orderedPubkeys,
-        limit: 100,
-      ),
-    );
-    await Future.delayed(timeout);
-    return orderedPubkeys
-        .map((pubkey) => bestByAuthor[pubkey])
-        .whereType<NostrEvent>()
-        .toList(growable: false);
-  } finally {
-    await sub.cancel();
-    nostrService.closeSubscription(subid);
-  }
+  nostrService.subscribeWithId(
+    subid,
+    NostrFilter(
+      kinds: const [_inviteEventKind],
+      authors: orderedPubkeys,
+      limit: 100,
+    ),
+  );
+
+  Timer(timeout, () async {
+    if (completer.isCompleted) return;
+    completer.complete(await finish());
+  });
+
+  return completer.future;
 }

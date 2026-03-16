@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
+import 'package:iris_chat/core/services/logger_service.dart';
 import 'package:iris_chat/core/services/profile_service.dart';
 import 'package:iris_chat/core/services/session_manager_service.dart';
 import 'package:iris_chat/features/chat/data/datasources/session_local_datasource.dart';
@@ -21,8 +22,11 @@ void main() {
   late MockSessionLocalDatasource mockDatasource;
   late MockProfileService mockProfileService;
   late MockSessionManagerService mockSessionManagerService;
+  late bool previousLoggerEnabled;
 
   setUpAll(() {
+    previousLoggerEnabled = Logger.enabled;
+    Logger.enabled = false;
     registerFallbackValue(
       ChatSession(
         id: 'fallback',
@@ -31,6 +35,10 @@ void main() {
         isInitiator: true,
       ),
     );
+  });
+
+  tearDownAll(() {
+    Logger.enabled = previousLoggerEnabled;
   });
 
   setUp(() {
@@ -187,6 +195,29 @@ void main() {
 
         expect(notifier.state.sessions, contains(session));
         verify(() => mockDatasource.saveSession(session)).called(1);
+      });
+
+      test('waits for persistence before completing', () async {
+        final session = ChatSession(
+          id: 'session-1',
+          recipientPubkeyHex: 'pubkey1',
+          createdAt: DateTime.now(),
+        );
+        final saveCompleter = Completer<void>();
+
+        when(
+          () => mockDatasource.saveSession(session),
+        ).thenAnswer((_) => saveCompleter.future);
+
+        final future = notifier.addSession(session);
+
+        await expectLater(
+          future.timeout(const Duration(milliseconds: 50)),
+          throwsA(isA<TimeoutException>()),
+        );
+
+        saveCompleter.complete();
+        await future;
       });
 
       test('adds new session at beginning of list', () async {

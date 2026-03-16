@@ -453,7 +453,9 @@ void main() {
         expect(find.text('Chats Screen'), findsOneWidget);
       });
 
-      testWidgets('login registers the generated device key', (tester) async {
+      testWidgets('login does not register the generated device key', (
+        tester,
+      ) async {
         when(
           () => mockAuthRepo.login(
             any(),
@@ -474,13 +476,13 @@ void main() {
         verify(
           () => mockAuthRepo.login('nsec1dummykey', devicePrivkeyHex: null),
         ).called(1);
-        verify(
+        verifyNever(
           () => mockLoginDeviceRegistrationService.registerDevice(
             ownerPubkeyHex: testPubkeyHex,
             ownerPrivkeyHex: testPrivkeyHex,
             devicePubkeyHex: generatedDevicePubkeyHex,
           ),
-        ).called(1);
+        );
       });
 
       testWidgets(
@@ -509,18 +511,18 @@ void main() {
           verify(
             () => mockAuthRepo.login(nsec, devicePrivkeyHex: null),
           ).called(1);
-          verify(
+          verifyNever(
             () => mockLoginDeviceRegistrationService.registerDevice(
               ownerPubkeyHex: testPubkeyHex,
               ownerPrivkeyHex: testPrivkeyHex,
               devicePubkeyHex: generatedDevicePubkeyHex,
             ),
-          ).called(1);
+          );
         },
       );
 
       testWidgets(
-        'login still succeeds when device registration publish fails',
+        'login succeeds without calling device registration',
         (tester) async {
           when(
             () => mockAuthRepo.login(
@@ -528,13 +530,6 @@ void main() {
               devicePrivkeyHex: any(named: 'devicePrivkeyHex'),
             ),
           ).thenAnswer((_) async => const Identity(pubkeyHex: testPubkeyHex));
-          when(
-            () => mockLoginDeviceRegistrationService.registerDevice(
-              ownerPubkeyHex: any(named: 'ownerPubkeyHex'),
-              ownerPrivkeyHex: any(named: 'ownerPrivkeyHex'),
-              devicePubkeyHex: any(named: 'devicePubkeyHex'),
-            ),
-          ).thenThrow(Exception('relay failed'));
 
           await tester.pumpWidget(buildLoginScreenRouter());
           await tester.pumpAndSettle();
@@ -549,6 +544,13 @@ void main() {
           verify(
             () => mockAuthRepo.login('nsec1dummykey', devicePrivkeyHex: null),
           ).called(1);
+          verifyNever(
+            () => mockLoginDeviceRegistrationService.registerDevice(
+              ownerPubkeyHex: any(named: 'ownerPubkeyHex'),
+              ownerPrivkeyHex: any(named: 'ownerPrivkeyHex'),
+              devicePubkeyHex: any(named: 'devicePubkeyHex'),
+            ),
+          );
           expect(find.text('Chats Screen'), findsOneWidget);
         },
       );

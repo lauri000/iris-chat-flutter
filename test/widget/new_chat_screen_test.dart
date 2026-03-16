@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/config/providers/invite_provider.dart';
+import 'package:iris_chat/core/services/logger_service.dart';
 import 'package:iris_chat/core/services/profile_service.dart';
 import 'package:iris_chat/core/services/session_manager_service.dart';
 import 'package:iris_chat/features/chat/data/datasources/session_local_datasource.dart';
@@ -55,6 +56,7 @@ class _TestInviteNotifier extends InviteNotifier {
     String? label,
     int? maxUses,
     bool publishToRelays = false,
+    bool defaultToSingleUse = true,
   }) async {
     createCalls++;
     lastLabel = label;
@@ -63,7 +65,7 @@ class _TestInviteNotifier extends InviteNotifier {
       inviterPubkeyHex: 'pubkey',
       label: label,
       createdAt: DateTime(2026, 1, 1),
-      maxUses: maxUses,
+      maxUses: maxUses ?? (defaultToSingleUse ? 1 : null),
       serializedState: '{}',
     );
     state = state.copyWith(
@@ -77,6 +79,16 @@ class _TestInviteNotifier extends InviteNotifier {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  late bool previousLoggerEnabled;
+
+  setUpAll(() {
+    previousLoggerEnabled = Logger.enabled;
+    Logger.enabled = false;
+  });
+
+  tearDownAll(() {
+    Logger.enabled = previousLoggerEnabled;
+  });
 
   setUpAll(() {
     registerFallbackValue(

@@ -570,6 +570,19 @@ class NostrService {
 
   /// Whether service is disposed.
   bool get isDisposed => _disposed;
+
+  Map<String, dynamic> debugSnapshot() {
+    return {
+      'connectedCount': connectedCount,
+      'connectionStatus': connectionStatus,
+      'subscriptionFilters': _subscriptionFilters.map(
+        (key, value) => MapEntry(key, Map<String, dynamic>.from(value)),
+      ),
+      'activeSubscriptions': _activeSubscriptions.map(
+        (key, value) => MapEntry(key, value.toList()..sort()),
+      ),
+    };
+  }
 }
 
 /// Connection event for relay status changes.

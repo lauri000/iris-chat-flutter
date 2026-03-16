@@ -19,7 +19,30 @@ Future<NostrEvent?> fetchLatestAppKeysEvent(
   final subid = '$subscriptionLabel-${DateTime.now().microsecondsSinceEpoch}';
 
   NostrEvent? best;
-  final sub = nostrService.events.listen((event) {
+  var completed = false;
+  Timer? settleTimer;
+  late final StreamSubscription<NostrEvent> sub;
+
+  Future<NostrEvent?> finish() async {
+    if (completed) return best;
+    completed = true;
+    settleTimer?.cancel();
+    await sub.cancel();
+    nostrService.closeSubscription(subid);
+    return best;
+  }
+
+  final completer = Completer<NostrEvent?>();
+  void scheduleFinish() {
+    if (completed) return;
+    settleTimer?.cancel();
+    settleTimer = Timer(const Duration(milliseconds: 100), () async {
+      if (completer.isCompleted) return;
+      completer.complete(await finish());
+    });
+  }
+
+  sub = nostrService.events.listen((event) {
     if (event.subscriptionId != subid) return;
     if (event.kind != _appKeysEventKind) return;
     if (event.pubkey.trim().toLowerCase() != normalizedOwnerPubkeyHex) return;
@@ -30,21 +53,22 @@ Future<NostrEvent?> fetchLatestAppKeysEvent(
     if (best == null || event.createdAt >= best!.createdAt) {
       best = event;
     }
+    scheduleFinish();
   });
 
-  try {
-    nostrService.subscribeWithId(
-      subid,
-      NostrFilter(
-        kinds: const [_appKeysEventKind],
-        authors: [normalizedOwnerPubkeyHex],
-        limit: 50,
-      ),
-    );
-    await Future.delayed(timeout);
-    return best;
-  } finally {
-    await sub.cancel();
-    nostrService.closeSubscription(subid);
-  }
+  nostrService.subscribeWithId(
+    subid,
+    NostrFilter(
+      kinds: const [_appKeysEventKind],
+      authors: [normalizedOwnerPubkeyHex],
+      limit: 50,
+    ),
+  );
+
+  Timer(timeout, () async {
+    if (completer.isCompleted) return;
+    completer.complete(await finish());
+  });
+
+  return completer.future;
 }

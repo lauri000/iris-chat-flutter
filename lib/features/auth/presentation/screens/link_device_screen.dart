@@ -133,7 +133,7 @@ class _LinkDeviceScreenState extends ConsumerState<LinkDeviceScreen> {
 
         final ownerPubkeyHex = result.ownerPubkeyHex ?? result.inviteePubkeyHex;
         final sessionState = await result.session.stateJson();
-        final remoteDeviceId = result.inviteePubkeyHex;
+        final remoteDeviceId = result.remoteDeviceId;
 
         _handledAcceptance = true;
         await _cleanupSubscription();

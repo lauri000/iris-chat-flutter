@@ -47,6 +47,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
   bool _readReceiptsEnabled = true;
   bool _desktopNotificationsEnabled = true;
 
+  Future<void> _armPeerSession(String recipientPubkeyHex) async {
+    final normalized = recipientPubkeyHex.trim().toLowerCase();
+    if (normalized.isEmpty) return;
+    try {
+      await _sessionManagerService.setupUser(normalized);
+    } catch (_) {}
+  }
+
   void setOutboundSignalSettings({
     required bool typingIndicatorsEnabled,
     required bool deliveryReceiptsEnabled,
@@ -340,6 +348,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           );
           await _sessionDatasource.saveSession(session);
         }
+        await _armPeerSession(senderPubkeyHex);
 
         final timestamp = createdAt != null
             ? DateTime.fromMillisecondsSinceEpoch(createdAt * 1000)
@@ -382,6 +391,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       if (peerPubkeyHex == null || peerPubkeyHex.isEmpty) {
         return null;
       }
+      await _armPeerSession(peerPubkeyHex);
 
       // Find or create session by recipient pubkey (peer pubkey).
       if (!mounted) return null;
@@ -535,6 +545,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       // De-dup using stable inner id.
       if (await _messageDatasource.messageExists(rumor.id)) {
+        if (!mounted) return null;
         // When we receive a relay echo / self-copy of our own outgoing message,
         // use it to backfill the outer event id so reactions can reference it.
         if (isMine && eventId != null && eventId.isNotEmpty) {
@@ -562,6 +573,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         // but clients should not surface them.
         return null;
       }
+      if (!mounted) return null;
 
       final message = ChatMessage(
         id: rumor.id,
@@ -587,6 +599,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
 
       await addReceivedMessage(message);
+      if (!mounted) return null;
 
       // Auto-send delivery receipt for incoming messages.
       if (!isMine && _deliveryReceiptsEnabled) {
@@ -603,6 +616,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       return message;
     } catch (e, st) {
+      if (!mounted) return null;
       final appError = AppError.from(e, st);
       state = state.copyWith(error: appError.message);
       return null;
@@ -835,6 +849,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     MessageStatus nextStatus, {
     required MessageDirection direction,
   }) async {
+    if (!mounted) return;
     if (direction == MessageDirection.outgoing) {
       await _messageDatasource.updateOutgoingStatusByRumorId(
         rumorId,
@@ -846,6 +861,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         nextStatus,
       );
     }
+    if (!mounted) return;
 
     var changed = false;
     final updatedBySession = <String, List<ChatMessage>>{};
@@ -867,6 +883,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   void _backfillOutgoingEventId(String rumorId, String eventId) {
+    if (!mounted) return;
     // Update UI state immediately; persist in background.
     var changed = false;
     final updatedBySession = <String, List<ChatMessage>>{};
@@ -973,11 +990,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   /// Add a received message.
   Future<void> addReceivedMessage(ChatMessage message) async {
+    if (!mounted) return;
     // Check if message already exists
     final dedupeKey = message.rumorId ?? message.eventId ?? message.id;
     if (await _messageDatasource.messageExists(dedupeKey)) return;
+    if (!mounted) return;
 
     await _messageDatasource.saveMessage(message);
+    if (!mounted) return;
 
     final sessionId = message.sessionId;
     final currentMessages = state.messages[sessionId] ?? [];

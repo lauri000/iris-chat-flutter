@@ -138,34 +138,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
-  Future<void> _registerCurrentDeviceForImportedIdentity() async {
-    final authState = ref.read(authStateProvider);
-    final ownerPubkeyHex = authState.pubkeyHex;
-    final devicePubkeyHex = authState.devicePubkeyHex;
-    if (!authState.hasOwnerKey ||
-        ownerPubkeyHex == null ||
-        devicePubkeyHex == null) {
-      return;
-    }
-
-    final ownerPrivkeyHex = await ref
-        .read(authRepositoryProvider)
-        .getOwnerPrivateKey();
-    if (ownerPrivkeyHex == null) return;
-
-    try {
-      await ref
-          .read(loginDeviceRegistrationServiceProvider)
-          .registerDevice(
-            ownerPubkeyHex: ownerPubkeyHex,
-            ownerPrivkeyHex: ownerPrivkeyHex,
-            devicePubkeyHex: devicePubkeyHex,
-          );
-    } catch (_) {
-      // Non-blocking: login succeeds even if relay publishing fails.
-    }
-  }
-
   Future<void> _login() async {
     final key = _keyController.text.trim();
     if (key.isEmpty) return;
@@ -173,7 +145,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     await ref.read(authStateProvider.notifier).login(key);
     final state = ref.read(authStateProvider);
     if (!state.isAuthenticated) return;
-    await _registerCurrentDeviceForImportedIdentity();
 
     if (!mounted) return;
     context.go('/chats');

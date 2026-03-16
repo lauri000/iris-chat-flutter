@@ -6,6 +6,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../features/auth/domain/repositories/auth_repository.dart';
 import '../ffi/ndr_ffi.dart';
+import '../utils/app_keys_event_fetch.dart';
+import '../utils/device_invite_event_fetch.dart';
 import 'logger_service.dart';
 import 'nostr_service.dart';
 
@@ -23,17 +25,340 @@ class DecryptedMessage {
   final int? createdAt;
 }
 
+String? _jsonStringValue(
+  Map<String, dynamic> map,
+  String snakeKey,
+  String camelKey,
+) {
+  final value = map[snakeKey] ?? map[camelKey];
+  if (value is String && value.isNotEmpty) return value;
+  return null;
+}
+
+bool sessionStateHasReceivingCapabilityJson(String stateJson) {
+  try {
+    final decoded = jsonDecode(stateJson);
+    if (decoded is! Map<String, dynamic>) return false;
+
+    final receivingChainKey =
+        decoded['receiving_chain_key'] ?? decoded['receivingChainKey'];
+    final theirCurrent =
+        decoded['their_current_nostr_public_key'] ??
+        decoded['theirCurrentNostrPublicKey'];
+    final receivingNumber =
+        decoded['receiving_chain_message_number'] ??
+        decoded['receivingChainMessageNumber'];
+
+    return receivingChainKey != null ||
+        theirCurrent != null ||
+        (receivingNumber is num && receivingNumber.toInt() > 0);
+  } catch (_) {
+    return false;
+  }
+}
+
+bool sessionStateTracksSenderPubkeyJson(
+  String stateJson,
+  String senderPubkeyHex,
+) {
+  try {
+    final decoded = jsonDecode(stateJson);
+    if (decoded is! Map<String, dynamic>) return false;
+
+    final normalizedSender = senderPubkeyHex.trim().toLowerCase();
+    if (normalizedSender.isEmpty) return false;
+
+    final current = _jsonStringValue(
+      decoded,
+      'their_current_nostr_public_key',
+      'theirCurrentNostrPublicKey',
+    );
+    final next = _jsonStringValue(
+      decoded,
+      'their_next_nostr_public_key',
+      'theirNextNostrPublicKey',
+    );
+
+    return current?.trim().toLowerCase() == normalizedSender ||
+        next?.trim().toLowerCase() == normalizedSender;
+  } catch (_) {
+    return false;
+  }
+}
+
+List<String> storedDeviceIdsMissingReceivingStateForSender({
+  required String userRecordJson,
+  required String senderPubkeyHex,
+}) {
+  try {
+    final decoded = jsonDecode(userRecordJson);
+    if (decoded is! Map<String, dynamic>) return const <String>[];
+
+    final devices = decoded['devices'];
+    if (devices is! List) return const <String>[];
+
+    final normalizedSender = senderPubkeyHex.trim().toLowerCase();
+    if (normalizedSender.isEmpty) return const <String>[];
+
+    final matchingDeviceIds = <String>[];
+    for (final rawDevice in devices) {
+      if (rawDevice is! Map) continue;
+      final device = Map<String, dynamic>.from(rawDevice);
+      final deviceId = _jsonStringValue(
+        device,
+        'device_id',
+        'deviceId',
+      )?.trim();
+      if (deviceId == null || deviceId.isEmpty) continue;
+
+      final sessionMaps = <Map<String, dynamic>>[];
+      final active = device['active_session'] ?? device['activeSession'];
+      if (active is Map) {
+        sessionMaps.add(Map<String, dynamic>.from(active));
+      }
+
+      final inactive =
+          device['inactive_sessions'] ?? device['inactiveSessions'];
+      if (inactive is List) {
+        for (final rawSession in inactive) {
+          if (rawSession is Map) {
+            sessionMaps.add(Map<String, dynamic>.from(rawSession));
+          }
+        }
+      }
+
+      var tracksSender = false;
+      var hasReceivingSession = false;
+      for (final sessionMap in sessionMaps) {
+        final current = _jsonStringValue(
+          sessionMap,
+          'their_current_nostr_public_key',
+          'theirCurrentNostrPublicKey',
+        );
+        final next = _jsonStringValue(
+          sessionMap,
+          'their_next_nostr_public_key',
+          'theirNextNostrPublicKey',
+        );
+        final tracksThisSender =
+            current?.trim().toLowerCase() == normalizedSender ||
+            next?.trim().toLowerCase() == normalizedSender;
+        if (!tracksThisSender) continue;
+
+        tracksSender = true;
+        final sessionJson = jsonEncode(sessionMap);
+        if (sessionStateHasReceivingCapabilityJson(sessionJson)) {
+          hasReceivingSession = true;
+          break;
+        }
+      }
+
+      if (tracksSender && !hasReceivingSession) {
+        matchingDeviceIds.add(deviceId);
+      }
+    }
+
+    return matchingDeviceIds;
+  } catch (_) {
+    return const <String>[];
+  }
+}
+
+List<Map<String, dynamic>> _deviceSessionMaps(Map<String, dynamic> device) {
+  final sessionMaps = <Map<String, dynamic>>[];
+
+  final active = device['active_session'] ?? device['activeSession'];
+  if (active is Map) {
+    sessionMaps.add(Map<String, dynamic>.from(active));
+  }
+
+  final inactive = device['inactive_sessions'] ?? device['inactiveSessions'];
+  if (inactive is List) {
+    for (final rawSession in inactive) {
+      if (rawSession is Map) {
+        sessionMaps.add(Map<String, dynamic>.from(rawSession));
+      }
+    }
+  }
+
+  return sessionMaps;
+}
+
+List<String> storedKnownDeviceIdsMissingRecords(String userRecordJson) {
+  try {
+    final decoded = jsonDecode(userRecordJson);
+    if (decoded is! Map<String, dynamic>) return const <String>[];
+
+    final knownDeviceIdentities = decoded['known_device_identities'];
+    if (knownDeviceIdentities is! List) return const <String>[];
+
+    final knownDeviceIds = <String>{};
+    for (final value in knownDeviceIdentities) {
+      final deviceId = value?.toString().trim();
+      if (deviceId != null && deviceId.isNotEmpty) {
+        knownDeviceIds.add(deviceId);
+      }
+    }
+    if (knownDeviceIds.isEmpty) return const <String>[];
+
+    final devices = decoded['devices'];
+    if (devices is! List) {
+      return knownDeviceIds.toList(growable: false);
+    }
+
+    final presentDeviceIds = <String>{};
+    for (final rawDevice in devices) {
+      if (rawDevice is! Map) continue;
+      final device = Map<String, dynamic>.from(rawDevice);
+      final deviceId = _jsonStringValue(
+        device,
+        'device_id',
+        'deviceId',
+      )?.trim();
+      if (deviceId != null && deviceId.isNotEmpty) {
+        presentDeviceIds.add(deviceId);
+      }
+    }
+
+    return knownDeviceIds
+        .where((deviceId) => !presentDeviceIds.contains(deviceId))
+        .toList(growable: false);
+  } catch (_) {
+    return const <String>[];
+  }
+}
+
+String? storedReceivingSessionStateForDevice({
+  required String userRecordJson,
+  required String deviceId,
+  String? senderPubkeyHex,
+}) {
+  try {
+    final decoded = jsonDecode(userRecordJson);
+    if (decoded is! Map<String, dynamic>) return null;
+
+    final devices = decoded['devices'];
+    if (devices is! List) return null;
+
+    final normalizedDeviceId = deviceId.trim();
+    if (normalizedDeviceId.isEmpty) return null;
+    final normalizedSender = senderPubkeyHex?.trim().toLowerCase();
+
+    for (final rawDevice in devices) {
+      if (rawDevice is! Map) continue;
+      final device = Map<String, dynamic>.from(rawDevice);
+      final currentDeviceId = _jsonStringValue(
+        device,
+        'device_id',
+        'deviceId',
+      )?.trim();
+      if (currentDeviceId != normalizedDeviceId) continue;
+
+      Map<String, dynamic>? firstReceivingFallback;
+      for (final sessionMap in _deviceSessionMaps(device)) {
+        final sessionJson = jsonEncode(sessionMap);
+        if (!sessionStateHasReceivingCapabilityJson(sessionJson)) {
+          continue;
+        }
+
+        firstReceivingFallback ??= sessionMap;
+        if (normalizedSender == null || normalizedSender.isEmpty) {
+          return sessionJson;
+        }
+        if (sessionStateTracksSenderPubkeyJson(sessionJson, normalizedSender)) {
+          return sessionJson;
+        }
+      }
+
+      if (firstReceivingFallback != null) {
+        return jsonEncode(firstReceivingFallback);
+      }
+      return null;
+    }
+  } catch (_) {
+    return null;
+  }
+
+  return null;
+}
+
+List<String> storedDeviceIdsMissingReceiveStateComparedToSnapshot({
+  required String currentUserRecordJson,
+  required String snapshotUserRecordJson,
+}) {
+  try {
+    final currentDecoded = jsonDecode(currentUserRecordJson);
+    final snapshotDecoded = jsonDecode(snapshotUserRecordJson);
+    if (currentDecoded is! Map<String, dynamic> ||
+        snapshotDecoded is! Map<String, dynamic>) {
+      return const <String>[];
+    }
+
+    final currentDevices = currentDecoded['devices'];
+    final snapshotDevices = snapshotDecoded['devices'];
+    if (snapshotDevices is! List) return const <String>[];
+
+    final currentReceiveByDeviceId = <String, bool>{};
+    if (currentDevices is List) {
+      for (final rawDevice in currentDevices) {
+        if (rawDevice is! Map) continue;
+        final device = Map<String, dynamic>.from(rawDevice);
+        final deviceId = _jsonStringValue(
+          device,
+          'device_id',
+          'deviceId',
+        )?.trim();
+        if (deviceId == null || deviceId.isEmpty) continue;
+
+        currentReceiveByDeviceId[deviceId] = _deviceSessionMaps(device).any(
+          (sessionMap) =>
+              sessionStateHasReceivingCapabilityJson(jsonEncode(sessionMap)),
+        );
+      }
+    }
+
+    final missingDeviceIds = <String>[];
+    for (final rawDevice in snapshotDevices) {
+      if (rawDevice is! Map) continue;
+      final device = Map<String, dynamic>.from(rawDevice);
+      final deviceId = _jsonStringValue(
+        device,
+        'device_id',
+        'deviceId',
+      )?.trim();
+      if (deviceId == null || deviceId.isEmpty) continue;
+
+      final snapshotHasReceiveState = _deviceSessionMaps(device).any(
+        (sessionMap) =>
+            sessionStateHasReceivingCapabilityJson(jsonEncode(sessionMap)),
+      );
+      if (!snapshotHasReceiveState) continue;
+
+      if (currentReceiveByDeviceId[deviceId] != true) {
+        missingDeviceIds.add(deviceId);
+      }
+    }
+
+    return missingDeviceIds;
+  } catch (_) {
+    return const <String>[];
+  }
+}
+
 /// Bridges NDR SessionManager with the app's Nostr transport.
 class SessionManagerService {
   SessionManagerService(
     this._nostrService,
     this._authRepository, {
     String? storagePathOverride,
-  }) : _storagePathOverride = storagePathOverride;
+    Future<bool> Function(String eventId)? hasProcessedMessageEventId,
+  }) : _storagePathOverride = storagePathOverride,
+       _hasProcessedMessageEventId = hasProcessedMessageEventId;
 
   final NostrService _nostrService;
   final AuthRepository _authRepository;
   final String? _storagePathOverride;
+  final Future<bool> Function(String eventId)? _hasProcessedMessageEventId;
 
   final StreamController<DecryptedMessage> _decryptedController =
       StreamController<DecryptedMessage>.broadcast();
@@ -50,26 +375,64 @@ class SessionManagerService {
   bool _isDisposed = false;
   Future<void> _opQueue = Future.value();
   final Map<String, int> _eventTimestamps = {};
+  final Map<String, String> _eventSenderPubkeys = <String, String>{};
+  final List<Map<String, dynamic>> _debugRecentRelayEvents =
+      <Map<String, dynamic>>[];
+  final List<Map<String, dynamic>> _debugRecentDecryptedEvents =
+      <Map<String, dynamic>>[];
+  final Map<String, String> _recentLinkedDeviceSenderByPeerOwner =
+      <String, String>{};
+  final Map<String, String> _preInitUserRecordJsonByOwner = <String, String>{};
+  final Map<String, int> _processedMessageEventIds = <String, int>{};
   static const String _groupOuterSubId = 'ndr-group-outer';
+  static const String _processedMessageEventIdsFileName =
+      'processed_message_event_ids.json';
+  static const int _kMaxProcessedMessageEventIds = 4000;
   List<String> _groupOuterSenderEventPubkeys = const [];
   static Future<void> _storageCriticalQueue = Future.value();
+  String? _processedMessageEventIdsPath;
+  Future<void> _processedIdsPersistQueue = Future.value();
 
   /// Owner public key (hex) for this session manager (differs for linked devices).
   String? get ownerPubkeyHex => _ownerPubkeyHex;
+  String? get devicePubkeyHex => _devicePubkeyHex;
+
+  Map<String, dynamic> debugSnapshot() {
+    return {
+      'ownerPubkeyHex': _ownerPubkeyHex,
+      'devicePubkeyHex': _devicePubkeyHex,
+      'recentLinkedDeviceSenderByPeerOwner': Map<String, String>.from(
+        _recentLinkedDeviceSenderByPeerOwner,
+      ),
+      'recentRelayEvents': List<Map<String, dynamic>>.from(
+        _debugRecentRelayEvents,
+      ),
+      'recentDecryptedEvents': List<Map<String, dynamic>>.from(
+        _debugRecentDecryptedEvents,
+      ),
+    };
+  }
 
   Future<void> start() async {
     if (_started) return;
     _started = true;
-
-    await _runExclusive(() async {
-      await _initManager();
-    });
 
     _eventSubscription = _nostrService.events.listen((event) {
       _runExclusiveDetached(() async {
         await _handleEvent(event);
       });
     });
+
+    try {
+      await _runExclusive(() async {
+        await _initManager();
+      });
+    } catch (_) {
+      await _eventSubscription?.cancel();
+      _eventSubscription = null;
+      _started = false;
+      rethrow;
+    }
 
     // Periodically drain events to avoid missing publishes/subscriptions.
     _drainTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
@@ -100,13 +463,13 @@ class SessionManagerService {
   }
 
   Future<void> refreshSubscription() async {
-    await _runExclusive(() async {
+    await _runExclusiveIgnoringDisposed(() async {
       await _drainEventsUnlocked();
     });
   }
 
   Future<void> setupUser(String userPubkeyHex) async {
-    await _runExclusive(() async {
+    await _runExclusiveIgnoringDisposed(() async {
       final manager = _manager;
       if (manager == null) {
         throw const NostrException('Session manager not initialized');
@@ -126,7 +489,7 @@ class SessionManagerService {
     }
     if (ordered.isEmpty) return;
 
-    await _runExclusive(() async {
+    await _runExclusiveIgnoringDisposed(() async {
       final manager = _manager;
       if (manager == null) {
         throw const NostrException('Session manager not initialized');
@@ -136,6 +499,165 @@ class SessionManagerService {
       }
       await _drainEventsUnlocked();
     });
+  }
+
+  Future<void> bootstrapUsersFromRelay(Iterable<String> userPubkeysHex) async {
+    final orderedOwners = <String>[];
+    final seenOwners = <String>{};
+    for (final raw in userPubkeysHex) {
+      final normalized = raw.trim().toLowerCase();
+      if (normalized.isEmpty || !seenOwners.add(normalized)) continue;
+      orderedOwners.add(normalized);
+    }
+    if (orderedOwners.isEmpty) return;
+
+    final appKeysEvents = <NostrEvent>[];
+    final inviteEvents = <NostrEvent>[];
+    final seenEventIds = <String>{};
+
+    for (final ownerPubkeyHex in orderedOwners) {
+      final appKeysEvent = await fetchLatestAppKeysEvent(
+        _nostrService,
+        ownerPubkeyHex: ownerPubkeyHex,
+        timeout: const Duration(seconds: 1),
+        subscriptionLabel: 'appkeys-bootstrap',
+      );
+      final devicePubkeys = <String>{ownerPubkeyHex};
+
+      if (appKeysEvent != null && seenEventIds.add(appKeysEvent.id)) {
+        appKeysEvents.add(appKeysEvent);
+        try {
+          final parsed = await NdrFfi.parseAppKeysEvent(
+            jsonEncode(appKeysEvent.toJson()),
+          );
+          for (final device in parsed) {
+            final normalized = device.identityPubkeyHex.trim().toLowerCase();
+            if (normalized.isNotEmpty) {
+              devicePubkeys.add(normalized);
+            }
+          }
+        } catch (_) {}
+      }
+
+      final latestInvites = await fetchLatestDeviceInviteEvents(
+        _nostrService,
+        devicePubkeysHex: devicePubkeys,
+        timeout: const Duration(seconds: 1),
+        subscriptionLabel: 'device-invite-bootstrap',
+      );
+      for (final inviteEvent in latestInvites) {
+        if (seenEventIds.add(inviteEvent.id)) {
+          inviteEvents.add(inviteEvent);
+        }
+      }
+    }
+
+    if (appKeysEvents.isEmpty && inviteEvents.isEmpty) return;
+
+    await _runExclusiveIgnoringDisposed(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+
+      for (final event in appKeysEvents) {
+        await manager.processEvent(jsonEncode(event.toJson()));
+      }
+      for (final event in inviteEvents) {
+        await manager.processEvent(jsonEncode(event.toJson()));
+      }
+      await _drainEventsUnlocked();
+    });
+  }
+
+  Future<void> repairRecentlyActiveLinkedDeviceRecords(
+    Iterable<String> peerOwnerPubkeysHex,
+  ) async {
+    final orderedOwners = <String>[];
+    final seenOwners = <String>{};
+    for (final raw in peerOwnerPubkeysHex) {
+      final normalized = raw.trim().toLowerCase();
+      if (normalized.isEmpty || !seenOwners.add(normalized)) continue;
+      orderedOwners.add(normalized);
+    }
+    if (orderedOwners.isEmpty) return;
+
+    final storagePath = _processedMessageEventIdsPath == null
+        ? await _resolveStoragePath()
+        : File(_processedMessageEventIdsPath!).parent.path;
+
+    for (final peerOwnerPubkeyHex in orderedOwners) {
+      final senderPubkeyHex =
+          _recentLinkedDeviceSenderByPeerOwner[peerOwnerPubkeyHex];
+
+      final userRecordFile = File(
+        '$storagePath/user_${peerOwnerPubkeyHex.trim().toLowerCase()}.json',
+      );
+      if (!userRecordFile.existsSync()) continue;
+
+      final userRecordJson = userRecordFile.readAsStringSync();
+      var targetDeviceIds = senderPubkeyHex == null || senderPubkeyHex.isEmpty
+          ? const <String>[]
+          : storedDeviceIdsMissingReceivingStateForSender(
+              userRecordJson: userRecordJson,
+              senderPubkeyHex: senderPubkeyHex,
+            );
+      if (targetDeviceIds.isEmpty) {
+        final missingKnownDeviceIds = storedKnownDeviceIdsMissingRecords(
+          userRecordJson,
+        );
+        if (missingKnownDeviceIds.length == 1) {
+          targetDeviceIds = missingKnownDeviceIds;
+        }
+      }
+      final backupUserRecordJson =
+          _preInitUserRecordJsonByOwner[peerOwnerPubkeyHex];
+      if (targetDeviceIds.isEmpty && backupUserRecordJson != null) {
+        targetDeviceIds = storedDeviceIdsMissingReceiveStateComparedToSnapshot(
+          currentUserRecordJson: userRecordJson,
+          snapshotUserRecordJson: backupUserRecordJson,
+        );
+      }
+      if (targetDeviceIds.isEmpty) continue;
+
+      final activeSessionState = await getActiveSessionState(
+        peerOwnerPubkeyHex,
+      );
+
+      for (final deviceId in targetDeviceIds) {
+        final snapshotState = backupUserRecordJson == null
+            ? null
+            : storedReceivingSessionStateForDevice(
+                userRecordJson: backupUserRecordJson,
+                deviceId: deviceId,
+                senderPubkeyHex: senderPubkeyHex,
+              );
+
+        var stateToImport = snapshotState;
+        if (senderPubkeyHex != null && senderPubkeyHex.isNotEmpty) {
+          if (activeSessionState != null &&
+              activeSessionState.isNotEmpty &&
+              sessionStateTracksSenderPubkeyJson(
+                activeSessionState,
+                senderPubkeyHex,
+              )) {
+            stateToImport = activeSessionState;
+          }
+        } else if ((stateToImport == null || stateToImport.isEmpty) &&
+            activeSessionState != null &&
+            activeSessionState.isNotEmpty) {
+          stateToImport = activeSessionState;
+        }
+        if (stateToImport == null || stateToImport.isEmpty) {
+          continue;
+        }
+        await importSessionState(
+          peerPubkeyHex: peerOwnerPubkeyHex,
+          stateJson: stateToImport,
+          deviceId: deviceId,
+        );
+      }
+    }
   }
 
   Future<List<String>> sendText({
@@ -213,7 +735,7 @@ class SessionManagerService {
     String? secret,
     bool? accepted,
   }) async {
-    await _runExclusive(() async {
+    await _runExclusiveIgnoringDisposed(() async {
       final manager = _manager;
       if (manager == null) {
         throw const NostrException('Session manager not initialized');
@@ -259,7 +781,7 @@ class SessionManagerService {
   }
 
   Future<void> groupRemove(String groupId) async {
-    await _runExclusive(() async {
+    await _runExclusiveIgnoringDisposed(() async {
       final manager = _manager;
       if (manager == null) return;
       await manager.groupRemove(groupId);
@@ -315,7 +837,7 @@ class SessionManagerService {
     required String receiptType,
     required List<String> messageIds,
   }) async {
-    await _runExclusive(() async {
+    await _runExclusiveIgnoringDisposed(() async {
       final manager = _manager;
       if (manager == null) return;
       await manager.sendReceipt(
@@ -331,7 +853,7 @@ class SessionManagerService {
     required String recipientPubkeyHex,
     int? expiresAtSeconds,
   }) async {
-    await _runExclusive(() async {
+    await _runExclusiveIgnoringDisposed(() async {
       final manager = _manager;
       if (manager == null) return;
       await manager.sendTyping(
@@ -347,7 +869,7 @@ class SessionManagerService {
     required String messageId,
     required String emoji,
   }) async {
-    await _runExclusive(() async {
+    await _runExclusiveIgnoringDisposed(() async {
       final manager = _manager;
       if (manager == null) return;
       await manager.sendReaction(
@@ -364,7 +886,7 @@ class SessionManagerService {
     required String stateJson,
     String? deviceId,
   }) async {
-    await _runExclusive(() async {
+    await _runExclusiveIgnoringDisposed(() async {
       await _ensureManagerInitializedUnlocked();
       final manager = _manager;
       if (manager == null) {
@@ -432,7 +954,7 @@ class SessionManagerService {
   }
 
   Future<void> processEventJson(String eventJson) async {
-    await _runExclusive(() async {
+    await _runExclusiveIgnoringDisposed(() async {
       final manager = _manager;
       if (manager == null) {
         throw const NostrException('Session manager not initialized');
@@ -461,6 +983,10 @@ class SessionManagerService {
         final storagePath = await _resolveStoragePath();
         // ndr-ffi expects the directory to exist.
         await Directory(storagePath).create(recursive: true);
+        _processedMessageEventIdsPath =
+            '$storagePath/$_processedMessageEventIdsFileName';
+        await _snapshotExistingUserRecords(storagePath);
+        await _loadProcessedMessageEventIds();
 
         _manager = await NdrFfi.createSessionManager(
           ourPubkeyHex: devicePubkeyHex,
@@ -492,7 +1018,9 @@ class SessionManagerService {
   }
 
   /// Resolve the on-disk storage directory used by ndr-ffi SessionManager.
-  static Future<String> resolveStoragePath({String? storagePathOverride}) async {
+  static Future<String> resolveStoragePath({
+    String? storagePathOverride,
+  }) async {
     final override = storagePathOverride;
     if (override != null && override.isNotEmpty) return override;
 
@@ -501,20 +1029,30 @@ class SessionManagerService {
   }
 
   /// Delete all persisted ndr-ffi SessionManager storage from disk.
-  static Future<void> clearPersistentStorage({String? storagePathOverride}) async {
+  static Future<void> clearPersistentStorage({
+    String? storagePathOverride,
+  }) async {
     await _runStorageCritical(
       action: () async {
         final storagePath = await resolveStoragePath(
           storagePathOverride: storagePathOverride,
         );
         final dir = Directory(storagePath);
-        if (!await dir.exists()) return;
-        await dir.delete(recursive: true);
+        if (!dir.existsSync()) return;
+        dir.deleteSync(recursive: true);
       },
     );
   }
 
   Future<void> _handleEvent(NostrEvent event) async {
+    _pushDebugEntry(_debugRecentRelayEvents, {
+      'id': event.id,
+      'kind': event.kind,
+      'pubkey': event.pubkey,
+      'subscriptionId': event.subscriptionId,
+      'createdAt': event.createdAt,
+    });
+
     // Only handle NDR-related kinds to reduce overhead.
     if (event.kind != 1060 &&
         event.kind != 1058 &&
@@ -523,17 +1061,38 @@ class SessionManagerService {
       return;
     }
 
-    // De-dupe by id for non-message kinds. For direct 1060 messages we need to
-    // allow later replays after new session subscriptions come online, because a
-    // relay may deliver the event before the relevant imported/accepted session exists.
+    if (event.kind == 1060) {
+      if (_processedMessageEventIds.containsKey(event.id)) {
+        _eventTimestamps[event.id] = event.createdAt;
+        return;
+      }
+      final hasProcessedMessageEventId = _hasProcessedMessageEventId;
+      if (hasProcessedMessageEventId != null) {
+        try {
+          if (await hasProcessedMessageEventId(event.id)) {
+            _eventTimestamps[event.id] = event.createdAt;
+            return;
+          }
+        } catch (_) {}
+      }
+    }
+
+    // De-dupe by id for non-message kinds. For direct 1060 messages we still
+    // allow replays by default, but if the outer event id is already present in
+    // local message storage we can safely skip it to avoid replaying old relay
+    // history on app reopen.
     if (event.kind != 1060 && _eventTimestamps.containsKey(event.id)) return;
     _eventTimestamps[event.id] = event.createdAt;
+    if (event.kind == 1060) {
+      _eventSenderPubkeys[event.id] = event.pubkey.trim().toLowerCase();
+    }
     // Prevent unbounded growth in long-running sessions.
     if (_eventTimestamps.length > 10000) {
       // Map preserves insertion order; drop oldest.
       final keys = _eventTimestamps.keys.take(2000).toList();
       for (final k in keys) {
         _eventTimestamps.remove(k);
+        _eventSenderPubkeys.remove(k);
       }
     }
 
@@ -545,6 +1104,10 @@ class SessionManagerService {
       try {
         final decrypted = await manager.groupHandleOuterEvent(eventJson);
         if (decrypted != null) {
+          _markProcessedMessageEventId(
+            decrypted.outerEventId,
+            createdAt: decrypted.outerCreatedAt,
+          );
           _decryptedController.add(
             DecryptedMessage(
               senderPubkeyHex: _resolveGroupSenderPubkeyHex(decrypted),
@@ -685,6 +1248,47 @@ class SessionManagerService {
           final createdAt = event.eventId != null
               ? _eventTimestamps[event.eventId!]
               : null;
+          if (event.eventId != null && event.eventId!.isNotEmpty) {
+            _markProcessedMessageEventId(event.eventId!, createdAt: createdAt);
+          }
+          String innerKind = 'non-json';
+          String innerContentPreview = event.content!;
+          try {
+            final decoded = jsonDecode(event.content!);
+            if (decoded is Map<String, dynamic>) {
+              innerKind = decoded['kind']?.toString() ?? 'null';
+              final innerContent = (decoded['content'] ?? '').toString();
+              innerContentPreview = innerContent.length > 160
+                  ? innerContent.substring(0, 160)
+                  : innerContent;
+            }
+          } catch (_) {}
+          _pushDebugEntry(_debugRecentDecryptedEvents, {
+            'senderPubkeyHex': event.senderPubkeyHex,
+            'eventId': event.eventId,
+            'createdAt': createdAt,
+            'innerKind': innerKind,
+            'innerContentPreview': innerContentPreview,
+            'contentPreview': event.content!.length > 160
+                ? event.content!.substring(0, 160)
+                : event.content!,
+          });
+          final outerSenderPubkeyHex = event.eventId == null
+              ? null
+              : _eventSenderPubkeys[event.eventId!];
+          if (outerSenderPubkeyHex != null &&
+              outerSenderPubkeyHex.isNotEmpty &&
+              outerSenderPubkeyHex !=
+                  event.senderPubkeyHex!.trim().toLowerCase()) {
+            _recentLinkedDeviceSenderByPeerOwner[event.senderPubkeyHex!
+                    .trim()
+                    .toLowerCase()] =
+                outerSenderPubkeyHex;
+            await _repairLinkedDeviceReceiveState(
+              peerOwnerPubkeyHex: event.senderPubkeyHex!,
+              senderPubkeyHex: outerSenderPubkeyHex,
+            );
+          }
           _decryptedController.add(
             DecryptedMessage(
               senderPubkeyHex: event.senderPubkeyHex!,
@@ -723,6 +1327,20 @@ class SessionManagerService {
     return completer.future;
   }
 
+  Future<void> _runExclusiveIgnoringDisposed(
+    Future<void> Function() action,
+  ) async {
+    if (_isDisposed) return;
+    try {
+      await _runExclusive(action);
+    } catch (error) {
+      if (_isDisposed && _isDisposedError(error)) {
+        return;
+      }
+      rethrow;
+    }
+  }
+
   void _runExclusiveDetached(Future<void> Function() action) {
     _opQueue = _opQueue
         .then((_) async {
@@ -737,7 +1355,9 @@ class SessionManagerService {
   }) {
     final completer = Completer<T>();
 
-    _storageCriticalQueue = _storageCriticalQueue.catchError((_) {}).then((_) async {
+    _storageCriticalQueue = _storageCriticalQueue.catchError((_) {}).then((
+      _,
+    ) async {
       try {
         final result = await action();
         if (!completer.isCompleted) completer.complete(result);
@@ -749,5 +1369,165 @@ class SessionManagerService {
     });
 
     return completer.future;
+  }
+
+  bool _isDisposedError(Object error) {
+    return error is NostrException &&
+        error.message == 'Session manager disposed';
+  }
+
+  Future<void> _repairLinkedDeviceReceiveState({
+    required String peerOwnerPubkeyHex,
+    required String senderPubkeyHex,
+  }) async {
+    final manager = _manager;
+    if (manager == null) return;
+
+    final activeSessionState = await manager.getActiveSessionState(
+      peerOwnerPubkeyHex,
+    );
+
+    final storagePath = _processedMessageEventIdsPath == null
+        ? await _resolveStoragePath()
+        : File(_processedMessageEventIdsPath!).parent.path;
+    final userRecordFile = File(
+      '$storagePath/user_${peerOwnerPubkeyHex.trim().toLowerCase()}.json',
+    );
+    if (!userRecordFile.existsSync()) return;
+
+    final userRecordJson = userRecordFile.readAsStringSync();
+    var targetDeviceIds = storedDeviceIdsMissingReceivingStateForSender(
+      userRecordJson: userRecordJson,
+      senderPubkeyHex: senderPubkeyHex,
+    );
+    if (targetDeviceIds.isEmpty) {
+      final missingKnownDeviceIds = storedKnownDeviceIdsMissingRecords(
+        userRecordJson,
+      );
+      if (missingKnownDeviceIds.length == 1) {
+        targetDeviceIds = missingKnownDeviceIds;
+      }
+    }
+    final backupUserRecordJson =
+        _preInitUserRecordJsonByOwner[peerOwnerPubkeyHex.trim().toLowerCase()];
+    if (targetDeviceIds.isEmpty && backupUserRecordJson != null) {
+      targetDeviceIds = storedDeviceIdsMissingReceiveStateComparedToSnapshot(
+        currentUserRecordJson: userRecordJson,
+        snapshotUserRecordJson: backupUserRecordJson,
+      );
+    }
+    if (targetDeviceIds.isEmpty) return;
+
+    for (final deviceId in targetDeviceIds) {
+      final snapshotState = backupUserRecordJson == null
+          ? null
+          : storedReceivingSessionStateForDevice(
+              userRecordJson: backupUserRecordJson,
+              deviceId: deviceId,
+              senderPubkeyHex: senderPubkeyHex,
+            );
+      var stateToImport = snapshotState;
+      if (activeSessionState != null &&
+          activeSessionState.isNotEmpty &&
+          sessionStateTracksSenderPubkeyJson(
+            activeSessionState,
+            senderPubkeyHex,
+          )) {
+        stateToImport = activeSessionState;
+      }
+      if (stateToImport == null || stateToImport.isEmpty) {
+        continue;
+      }
+      await manager.importSessionState(
+        peerPubkeyHex: peerOwnerPubkeyHex,
+        stateJson: stateToImport,
+        deviceId: deviceId,
+      );
+    }
+    await _drainEventsUnlocked();
+  }
+
+  void _pushDebugEntry(
+    List<Map<String, dynamic>> target,
+    Map<String, dynamic> entry,
+  ) {
+    target.add(entry);
+    if (target.length > 20) {
+      target.removeRange(0, target.length - 20);
+    }
+  }
+
+  Future<void> _loadProcessedMessageEventIds() async {
+    final path = _processedMessageEventIdsPath;
+    if (path == null || path.isEmpty) return;
+
+    try {
+      final file = File(path);
+      if (!file.existsSync()) return;
+      final raw = file.readAsStringSync();
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+
+      _processedMessageEventIds.clear();
+      for (final value in decoded) {
+        if (value is String && value.isNotEmpty) {
+          _processedMessageEventIds[value] = 0;
+        }
+      }
+      _trimProcessedMessageEventIds();
+    } catch (_) {}
+  }
+
+  Future<void> _snapshotExistingUserRecords(String storagePath) async {
+    _preInitUserRecordJsonByOwner.clear();
+    try {
+      final dir = Directory(storagePath);
+      if (!dir.existsSync()) return;
+
+      for (final entry in dir.listSync()) {
+        if (entry is! File) continue;
+        final name = entry.uri.pathSegments.isEmpty
+            ? entry.path
+            : entry.uri.pathSegments.last;
+        if (!name.startsWith('user_') || !name.endsWith('.json')) continue;
+
+        final ownerPubkeyHex = name
+            .substring('user_'.length, name.length - '.json'.length)
+            .trim()
+            .toLowerCase();
+        if (ownerPubkeyHex.isEmpty) continue;
+        _preInitUserRecordJsonByOwner[ownerPubkeyHex] = entry
+            .readAsStringSync();
+      }
+    } catch (_) {}
+  }
+
+  void _markProcessedMessageEventId(String eventId, {int? createdAt}) {
+    if (eventId.isEmpty) return;
+    _processedMessageEventIds.remove(eventId);
+    _processedMessageEventIds[eventId] = createdAt ?? 0;
+    _trimProcessedMessageEventIds();
+    _scheduleProcessedMessageEventIdsPersist();
+  }
+
+  void _trimProcessedMessageEventIds() {
+    while (_processedMessageEventIds.length > _kMaxProcessedMessageEventIds) {
+      final oldestKey = _processedMessageEventIds.keys.first;
+      _processedMessageEventIds.remove(oldestKey);
+    }
+  }
+
+  void _scheduleProcessedMessageEventIdsPersist() {
+    final path = _processedMessageEventIdsPath;
+    if (path == null || path.isEmpty) return;
+
+    final payload = jsonEncode(_processedMessageEventIds.keys.toList());
+    _processedIdsPersistQueue = _processedIdsPersistQueue
+        .then((_) async {
+          try {
+            File(path).writeAsStringSync(payload, flush: true);
+          } catch (_) {}
+        })
+        .catchError((error, stackTrace) {});
   }
 }

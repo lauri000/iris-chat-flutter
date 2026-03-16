@@ -124,11 +124,9 @@ class SessionNotifier extends StateNotifier<SessionState> {
           .fetchProfiles([session.recipientPubkeyHex])
           .catchError((error, stackTrace) {}),
     );
-    unawaited(() async {
-      try {
-        await _sessionDatasource.saveSession(session);
-      } catch (_) {}
-    }());
+    try {
+      await _sessionDatasource.saveSession(session);
+    } catch (_) {}
   }
 
   /// Ensure a session exists for [recipientPubkeyHex] and return it.

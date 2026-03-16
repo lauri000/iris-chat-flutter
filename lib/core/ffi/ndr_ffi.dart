@@ -1043,6 +1043,8 @@ class InviteResponseResult {
   final String inviteePubkeyHex;
   final String? deviceId;
   final String? ownerPubkeyHex;
+
+  String get remoteDeviceId => deviceId ?? inviteePubkeyHex;
 }
 
 /// Result of accepting an invite via SessionManager.
