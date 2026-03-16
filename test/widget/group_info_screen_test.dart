@@ -163,6 +163,10 @@ void main() {
     final mockAuthRepo = _MockAuthRepository();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     late _TestGroupNotifier groupNotifier;
 
@@ -182,7 +186,11 @@ void main() {
             return notifier;
           }),
           sessionStateProvider.overrideWith((ref) {
-            final notifier = SessionNotifier(mockSessions, mockProfiles);
+            final notifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             notifier.state = SessionState(
               sessions: [
                 ChatSession(
@@ -241,6 +249,10 @@ void main() {
     final mockAuthRepo = _MockAuthRepository();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     late _TestGroupNotifier groupNotifier;
 
@@ -260,7 +272,11 @@ void main() {
             return notifier;
           }),
           sessionStateProvider.overrideWith((ref) {
-            final notifier = SessionNotifier(mockSessions, mockProfiles);
+            final notifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             notifier.state = const SessionState(sessions: []);
             return notifier;
           }),
@@ -297,6 +313,10 @@ void main() {
     final mockAuthRepo = _MockAuthRepository();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     late _TestGroupNotifier groupNotifier;
 
@@ -316,7 +336,11 @@ void main() {
             return notifier;
           }),
           sessionStateProvider.overrideWith((ref) {
-            final notifier = SessionNotifier(mockSessions, mockProfiles);
+            final notifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             notifier.state = const SessionState(sessions: []);
             return notifier;
           }),
@@ -349,6 +373,10 @@ void main() {
     final mockAuthRepo = _MockAuthRepository();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     late _TestGroupNotifier groupNotifier;
 
@@ -368,7 +396,11 @@ void main() {
             return notifier;
           }),
           sessionStateProvider.overrideWith((ref) {
-            final notifier = SessionNotifier(mockSessions, mockProfiles);
+            final notifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             notifier.state = const SessionState(sessions: []);
             return notifier;
           }),
@@ -399,6 +431,10 @@ void main() {
     final mockAuthRepo = _MockAuthRepository();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     await tester.pumpWidget(
       createTestApp(
@@ -416,7 +452,11 @@ void main() {
             return notifier;
           }),
           sessionStateProvider.overrideWith((ref) {
-            final notifier = SessionNotifier(mockSessions, mockProfiles);
+            final notifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             notifier.state = const SessionState(sessions: []);
             return notifier;
           }),
@@ -446,6 +486,10 @@ void main() {
     final mockAuthRepo = _MockAuthRepository();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     await tester.pumpWidget(
       createTestApp(
@@ -463,7 +507,11 @@ void main() {
             return notifier;
           }),
           sessionStateProvider.overrideWith((ref) {
-            final notifier = SessionNotifier(mockSessions, mockProfiles);
+            final notifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             notifier.state = const SessionState(sessions: []);
             return notifier;
           }),
@@ -489,6 +537,10 @@ void main() {
     final mockAuthRepo = _MockAuthRepository();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     late _TestGroupNotifier groupNotifier;
 
@@ -508,7 +560,11 @@ void main() {
             return notifier;
           }),
           sessionStateProvider.overrideWith((ref) {
-            final notifier = SessionNotifier(mockSessions, mockProfiles);
+            final notifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             notifier.state = const SessionState(sessions: []);
             return notifier;
           }),

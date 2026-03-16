@@ -49,6 +49,9 @@ void main() {
     mockMessageDatasource = MockMessageLocalDatasource();
     mockNostrService = MockNostrService();
     mockSessionManagerService = MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
   });
 
   setUpAll(() {
@@ -159,6 +162,7 @@ void main() {
           final notifier = SessionNotifier(
             mockSessionDatasource,
             profileService,
+            mockSessionManagerService,
           );
           // Pre-populate the sessions
           notifier.state = SessionState(
@@ -786,6 +790,7 @@ void main() {
                 final notifier = SessionNotifier(
                   mockSessionDatasource,
                   profileService,
+                  mockSessionManagerService,
                 );
                 notifier.state = SessionState(
                   sessions: [testSession, secondSession],

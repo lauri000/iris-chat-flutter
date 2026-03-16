@@ -57,6 +57,7 @@ void main() {
   ) async {
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
     const memberPubkeyHex =
         'b1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b3';
 
@@ -71,17 +72,21 @@ void main() {
         updatedAt: DateTime(2026, 1, 1),
       ),
     );
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
-    final sessionNotifier = SessionNotifier(mockSessions, mockProfiles)
-      ..state = SessionState(
-        sessions: [
-          ChatSession(
-            id: 's1',
-            recipientPubkeyHex: memberPubkeyHex,
-            createdAt: DateTime(2026, 1, 1),
-          ),
-        ],
-      );
+    final sessionNotifier =
+        SessionNotifier(mockSessions, mockProfiles, mockSessionManagerService)
+          ..state = SessionState(
+            sessions: [
+              ChatSession(
+                id: 's1',
+                recipientPubkeyHex: memberPubkeyHex,
+                createdAt: DateTime(2026, 1, 1),
+              ),
+            ],
+          );
 
     await tester.pumpWidget(
       createTestApp(
@@ -101,10 +106,17 @@ void main() {
   testWidgets('allows create submit with no selected members', (tester) async {
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
     final groupNotifier = _TestGroupNotifier();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
-    final sessionNotifier = SessionNotifier(mockSessions, mockProfiles)
-      ..state = const SessionState(sessions: []);
+    final sessionNotifier = SessionNotifier(
+      mockSessions,
+      mockProfiles,
+      mockSessionManagerService,
+    )..state = const SessionState(sessions: []);
 
     await tester.pumpWidget(
       createTestApp(

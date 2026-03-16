@@ -8,8 +8,8 @@ import 'package:go_router/go_router.dart';
 import 'package:nostr/nostr.dart' as nostr;
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../../config/providers/auth_provider.dart';
 import '../../../../config/providers/app_version_provider.dart';
+import '../../../../config/providers/auth_provider.dart';
 import '../../../../config/providers/chat_provider.dart';
 import '../../../../config/providers/desktop_notification_provider.dart';
 import '../../../../config/providers/device_manager_provider.dart';
@@ -539,7 +539,7 @@ class SettingsScreen extends ConsumerWidget {
             leading: const Icon(Icons.info),
             title: const Text('Version'),
             subtitle: appVersion.when(
-              data: (version) => Text(version),
+              data: Text.new,
               loading: () => const Text('Loading...'),
               error: (error, stackTrace) => const Text('Unknown'),
             ),

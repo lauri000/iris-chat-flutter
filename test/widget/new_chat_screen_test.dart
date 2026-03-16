@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/config/providers/invite_provider.dart';
 import 'package:iris_chat/core/services/profile_service.dart';
+import 'package:iris_chat/core/services/session_manager_service.dart';
 import 'package:iris_chat/features/chat/data/datasources/session_local_datasource.dart';
 import 'package:iris_chat/features/chat/domain/models/session.dart';
 import 'package:iris_chat/features/chat/presentation/screens/new_chat_screen.dart';
@@ -24,6 +25,9 @@ class _MockSessionLocalDatasource extends Mock
     implements SessionLocalDatasource {}
 
 class _MockProfileService extends Mock implements ProfileService {}
+
+class _MockSessionManagerService extends Mock
+    implements SessionManagerService {}
 
 class _TestInviteNotifier extends InviteNotifier {
   // ignore: use_super_parameters
@@ -88,7 +92,11 @@ void main() {
     final mockInvites = _MockInviteLocalDatasource();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
     late SessionNotifier sessionNotifier;
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     when(mockInvites.getActiveInvites).thenAnswer(
       (_) async => [
@@ -132,7 +140,11 @@ void main() {
         overrides: [
           inviteDatasourceProvider.overrideWithValue(mockInvites),
           sessionStateProvider.overrideWith((ref) {
-            sessionNotifier = SessionNotifier(mockSessions, mockProfiles);
+            sessionNotifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             sessionNotifier.state = const SessionState(sessions: []);
             return sessionNotifier;
           }),
@@ -154,6 +166,10 @@ void main() {
     final mockInvites = _MockInviteLocalDatasource();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     late _TestInviteNotifier inviteNotifier;
 
@@ -179,7 +195,11 @@ void main() {
             return inviteNotifier;
           }),
           sessionStateProvider.overrideWith((ref) {
-            final notifier = SessionNotifier(mockSessions, mockProfiles);
+            final notifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             notifier.state = const SessionState(sessions: []);
             return notifier;
           }),
@@ -209,6 +229,10 @@ void main() {
     final mockInvites = _MockInviteLocalDatasource();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     late _TestInviteNotifier notifier;
 
@@ -234,7 +258,11 @@ void main() {
             return notifier;
           }),
           sessionStateProvider.overrideWith((ref) {
-            final notifier = SessionNotifier(mockSessions, mockProfiles);
+            final notifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             notifier.state = const SessionState(sessions: []);
             return notifier;
           }),
@@ -259,6 +287,10 @@ void main() {
     final mockInvites = _MockInviteLocalDatasource();
     final mockSessions = _MockSessionLocalDatasource();
     final mockProfiles = _MockProfileService();
+    final mockSessionManagerService = _MockSessionManagerService();
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
 
     when(mockInvites.getActiveInvites).thenAnswer(
       (_) async => [
@@ -298,7 +330,11 @@ void main() {
         overrides: [
           inviteDatasourceProvider.overrideWithValue(mockInvites),
           sessionStateProvider.overrideWith((ref) {
-            final notifier = SessionNotifier(mockSessions, mockProfiles);
+            final notifier = SessionNotifier(
+              mockSessions,
+              mockProfiles,
+              mockSessionManagerService,
+            );
             notifier.state = const SessionState(sessions: []);
             return notifier;
           }),

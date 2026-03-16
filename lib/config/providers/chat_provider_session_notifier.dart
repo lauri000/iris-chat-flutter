@@ -16,7 +16,9 @@ class SessionNotifier extends StateNotifier<SessionState> {
     final normalized = recipientPubkeyHex.trim().toLowerCase();
     if (normalized.isEmpty) return;
     unawaited(
-      _sessionManagerService.setupUser(normalized).catchError((_, __) {}),
+      _sessionManagerService
+          .setupUser(normalized)
+          .catchError((error, stackTrace) {}),
     );
   }
 

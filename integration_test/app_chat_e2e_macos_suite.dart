@@ -399,7 +399,7 @@ Future<_AppInstance> _startLinkedInstance({
         response!.ownerPubkeyHex ?? response.inviteePubkeyHex;
     final sessionState = await response.session.stateJson();
     final remoteDeviceId = response.inviteePubkeyHex;
-    if (resolvedOwnerPubkeyHex == null || resolvedOwnerPubkeyHex.isEmpty) {
+    if (resolvedOwnerPubkeyHex.isEmpty) {
       throw StateError('Invite response missing owner pubkey for $name');
     }
     if (resolvedOwnerPubkeyHex.toLowerCase() != ownerPubkeyHex.toLowerCase()) {
@@ -1323,10 +1323,12 @@ void main() {
       final bobPubkey = bobOwnerC.read(authStateProvider).pubkeyHex;
       expect(alicePubkey, isNotNull);
       expect(bobPubkey, isNotNull);
+      final alicePubkeyHex = alicePubkey!;
+      final bobPubkeyHex = bobPubkey!;
 
       final baseAliceSession = await aliceOwnerC
           .read(sessionStateProvider.notifier)
-          .ensureSessionForRecipient(bobPubkey!);
+          .ensureSessionForRecipient(bobPubkeyHex);
       final bootstrapText =
           'owner bootstrap ${DateTime.now().millisecondsSinceEpoch}';
       await aliceOwnerC
@@ -1342,10 +1344,10 @@ void main() {
 
       await aliceOwnerC
           .read(sessionManagerServiceProvider)
-          .setupUser(bobPubkey!);
+          .setupUser(bobPubkeyHex);
       await bobOwnerC
           .read(sessionManagerServiceProvider)
-          .setupUser(alicePubkey!);
+          .setupUser(alicePubkeyHex);
 
       aliceLinked = await _startLinkedInstance(
         name: 'alice-linked-multi-device',
@@ -1355,7 +1357,7 @@ void main() {
       );
       await bobOwnerC
           .read(sessionManagerServiceProvider)
-          .setupUser(alicePubkey!);
+          .setupUser(alicePubkeyHex);
 
       bobLinked = await _startLinkedInstance(
         name: 'bob-linked-multi-device',
@@ -1365,12 +1367,12 @@ void main() {
       );
       await aliceOwnerC
           .read(sessionManagerServiceProvider)
-          .setupUser(bobPubkey!);
+          .setupUser(bobPubkeyHex);
 
       final aliceOwnerSessionId = aliceOwnerC
           .read(sessionStateProvider)
           .sessions
-          .firstWhere((s) => s.recipientPubkeyHex == bobPubkey)
+          .firstWhere((s) => s.recipientPubkeyHex == bobPubkeyHex)
           .id;
 
       final ownerToBobText =
@@ -1400,25 +1402,25 @@ void main() {
         condition: () {
           final sessions = bobLinked!.container.read(sessionStateProvider);
           return sessions.sessions.any(
-            (s) => s.recipientPubkeyHex == alicePubkey,
+            (s) => s.recipientPubkeyHex == alicePubkeyHex,
           );
         },
         timeout: const Duration(seconds: 20),
         debugOnTimeout: debugState,
       );
 
-      final bobLinkedSessionId = bobLinked!.container
+      final bobLinkedSessionId = bobLinked.container
           .read(sessionStateProvider)
           .sessions
-          .firstWhere((s) => s.recipientPubkeyHex == alicePubkey)
+          .firstWhere((s) => s.recipientPubkeyHex == alicePubkeyHex)
           .id;
 
       await bobLinked.container
           .read(sessionManagerServiceProvider)
-          .setupUser(alicePubkey);
+          .setupUser(alicePubkeyHex);
       await bobLinked.container
           .read(sessionManagerServiceProvider)
-          .setupUser(bobPubkey);
+          .setupUser(bobPubkeyHex);
 
       final linkedToAliceText =
           'bob linked -> alice all devices ${DateTime.now().millisecondsSinceEpoch}';

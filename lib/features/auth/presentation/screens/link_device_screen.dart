@@ -13,7 +13,6 @@ import '../../../../config/providers/invite_provider.dart';
 import '../../../../config/providers/nostr_provider.dart';
 import '../../../../core/ffi/ndr_ffi.dart';
 import '../../../../core/services/nostr_service.dart';
-import '../../../../core/services/session_manager_service.dart';
 import '../../../../core/utils/invite_url.dart';
 
 class LinkDeviceScreen extends ConsumerStatefulWidget {

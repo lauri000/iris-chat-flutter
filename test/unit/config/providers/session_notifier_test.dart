@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/core/services/profile_service.dart';
+import 'package:iris_chat/core/services/session_manager_service.dart';
 import 'package:iris_chat/features/chat/data/datasources/session_local_datasource.dart';
 import 'package:iris_chat/features/chat/domain/models/message.dart';
 import 'package:iris_chat/features/chat/domain/models/session.dart';
@@ -13,10 +14,13 @@ class MockSessionLocalDatasource extends Mock
 
 class MockProfileService extends Mock implements ProfileService {}
 
+class MockSessionManagerService extends Mock implements SessionManagerService {}
+
 void main() {
   late SessionNotifier notifier;
   late MockSessionLocalDatasource mockDatasource;
   late MockProfileService mockProfileService;
+  late MockSessionManagerService mockSessionManagerService;
 
   setUpAll(() {
     registerFallbackValue(
@@ -32,13 +36,21 @@ void main() {
   setUp(() {
     mockDatasource = MockSessionLocalDatasource();
     mockProfileService = MockProfileService();
+    mockSessionManagerService = MockSessionManagerService();
     when(
       () => mockProfileService.fetchProfiles(any()),
     ).thenAnswer((_) async {});
     when(
       () => mockProfileService.getProfile(any()),
     ).thenAnswer((_) async => null);
-    notifier = SessionNotifier(mockDatasource, mockProfileService);
+    when(
+      () => mockSessionManagerService.setupUser(any()),
+    ).thenAnswer((_) async {});
+    notifier = SessionNotifier(
+      mockDatasource,
+      mockProfileService,
+      mockSessionManagerService,
+    );
   });
 
   group('SessionNotifier', () {
