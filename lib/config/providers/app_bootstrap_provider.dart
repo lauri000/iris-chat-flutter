@@ -108,6 +108,17 @@ class AppBootstrapNotifier extends StateNotifier<AppBootstrapState> {
 
       if (!mounted || runId != _runId) return;
 
+      try {
+        await ref
+            .read(sessionManagerServiceProvider)
+            .setupUsers(
+              ref
+                  .read(sessionStateProvider)
+                  .sessions
+                  .map((session) => session.recipientPubkeyHex),
+            );
+      } catch (_) {}
+
       await ref.read(inviteStateProvider.notifier).loadInvites();
       try {
         await ref

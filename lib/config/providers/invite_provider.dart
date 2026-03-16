@@ -10,7 +10,6 @@ import '../../core/services/error_service.dart';
 import '../../core/services/logger_service.dart';
 import '../../core/services/nostr_service.dart';
 import '../../core/utils/app_keys_event_fetch.dart';
-import '../../core/utils/device_invite_event_fetch.dart';
 import '../../core/utils/invite_url.dart';
 import '../../features/chat/domain/models/session.dart';
 import '../../features/invite/data/datasources/invite_local_datasource.dart';
@@ -278,60 +277,20 @@ class InviteNotifier extends StateNotifier<InviteState> {
         throw Exception('Invalid public key');
       }
 
-      final nostrService = _ref.read(nostrServiceProvider);
       final sessionManager = _ref.read(sessionManagerServiceProvider);
-      final candidateInviteAuthors = <String>{normalizedOwnerPubkeyHex};
+      await sessionManager.setupUser(normalizedOwnerPubkeyHex);
 
       final deadline = DateTime.now().add(const Duration(seconds: 6));
       while (DateTime.now().isBefore(deadline)) {
-        final remaining = deadline.difference(DateTime.now());
-        final attemptTimeout = remaining > const Duration(milliseconds: 900)
-            ? const Duration(milliseconds: 900)
-            : remaining;
-
-        final latestAppKeys = await _fetchLatestAppKeysEvent(
-          nostrService,
-          ownerPubkeyHex: normalizedOwnerPubkeyHex,
-          timeout: attemptTimeout,
+        final activeSessionState = await sessionManager.getActiveSessionState(
+          normalizedOwnerPubkeyHex,
         );
-        if (latestAppKeys != null) {
-          await sessionManager.processEventJson(
-            jsonEncode(latestAppKeys.toJson()),
+        if (activeSessionState != null && activeSessionState.isNotEmpty) {
+          final sessionId = await _upsertAcceptedSession(
+            normalizedOwnerPubkeyHex,
           );
-          final devices = await NdrFfi.parseAppKeysEvent(
-            jsonEncode(latestAppKeys.toJson()),
-          );
-          for (final device in devices) {
-            final pubkeyHex = _normalizeDevicePubkeyHex(
-              device.identityPubkeyHex,
-            );
-            if (pubkeyHex != null) {
-              candidateInviteAuthors.add(pubkeyHex);
-            }
-          }
-        }
-
-        final inviteEvents = await fetchLatestDeviceInviteEvents(
-          nostrService,
-          devicePubkeysHex: candidateInviteAuthors,
-          timeout: attemptTimeout,
-          subscriptionLabel: 'public-invite-fetch',
-        );
-
-        for (final inviteEvent in inviteEvents) {
-          try {
-            final acceptResult = await sessionManager.acceptInviteFromEventJson(
-              eventJson: jsonEncode(inviteEvent.toJson()),
-              ownerPubkeyHintHex: normalizedOwnerPubkeyHex,
-            );
-            final sessionId = await _upsertAcceptedSession(
-              acceptResult.ownerPubkeyHex,
-            );
-            state = state.copyWith(isAccepting: false);
-            return sessionId;
-          } catch (e) {
-            // Ignore stale/unauthorized candidate invites and try the next device.
-          }
+          state = state.copyWith(isAccepting: false);
+          return sessionId;
         }
 
         await Future<void>.delayed(const Duration(milliseconds: 200));

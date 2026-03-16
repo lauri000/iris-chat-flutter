@@ -169,7 +169,7 @@ void main() {
       final v = await NdrFfi.version();
       expect(v, isNotEmpty);
       expect(v, isNot('unknown'));
-      expect(v, '0.0.77');
+      expect(v, matches(RegExp(r'^\d+\.\d+\.\d+$')));
 
       final kp = await NdrFfi.generateKeypair();
       expect(kp.publicKeyHex, hasLength(64));

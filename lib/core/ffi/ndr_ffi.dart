@@ -650,6 +650,14 @@ class SessionManagerHandle {
     await _channel.invokeMethod<void>('sessionManagerInit', {'id': _id});
   }
 
+  /// Subscribe to a user's AppKeys/device-invite streams and converge sessions.
+  Future<void> setupUser(String userPubkeyHex) async {
+    await _channel.invokeMethod<void>('sessionManagerSetupUser', {
+      'id': _id,
+      'userPubkeyHex': userPubkeyHex,
+    });
+  }
+
   /// Accept an invite URL through SessionManager's owner-aware invite flow.
   ///
   /// This flow publishes invite responses through SessionManager pubsub events.

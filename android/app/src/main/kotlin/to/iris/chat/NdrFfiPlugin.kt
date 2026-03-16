@@ -77,6 +77,7 @@ class NdrFfiPlugin : FlutterPlugin, MethodCallHandler {
                 "sessionManagerNew" -> handleSessionManagerNew(call, result)
                 "sessionManagerNewWithStoragePath" -> handleSessionManagerNewWithStoragePath(call, result)
                 "sessionManagerInit" -> handleSessionManagerInit(call, result)
+                "sessionManagerSetupUser" -> handleSessionManagerSetupUser(call, result)
                 "sessionManagerAcceptInviteFromUrl" -> handleSessionManagerAcceptInviteFromUrl(call, result)
                 "sessionManagerAcceptInviteFromEventJson" -> handleSessionManagerAcceptInviteFromEventJson(call, result)
                 "sessionManagerSendText" -> handleSessionManagerSendText(call, result)
@@ -513,6 +514,18 @@ class NdrFfiPlugin : FlutterPlugin, MethodCallHandler {
         val manager = sessionManagerHandles[id]
             ?: throw IllegalArgumentException("SessionManager handle not found: $id")
         manager.init()
+        result.success(null)
+    }
+
+    private fun handleSessionManagerSetupUser(call: MethodCall, result: Result) {
+        val id = call.argument<String>("id")
+            ?: throw IllegalArgumentException("Missing id")
+        val userPubkeyHex = call.argument<String>("userPubkeyHex")
+            ?: throw IllegalArgumentException("Missing userPubkeyHex")
+
+        val manager = sessionManagerHandles[id]
+            ?: throw IllegalArgumentException("SessionManager handle not found: $id")
+        manager.setupUser(userPubkeyHex)
         result.success(null)
     }
 

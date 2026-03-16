@@ -822,6 +822,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -947,6 +949,8 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_ndr_ffi_fn_method_sessionmanagerhandle_send_typing(`ptr`: Pointer,`recipientPubkeyHex`: RustBuffer.ByValue,`expiresAtSeconds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_ndr_ffi_fn_method_sessionmanagerhandle_setup_user(`ptr`: Pointer,`userPubkeyHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     fun uniffi_ndr_ffi_fn_func_create_signed_app_keys_event(`ownerPubkeyHex`: RustBuffer.ByValue,`ownerPrivkeyHex`: RustBuffer.ByValue,`devices`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_ndr_ffi_fn_func_derive_public_key(`privkeyHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1157,6 +1161,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_send_typing(
     ): Short
+    fun uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_setup_user(
+    ): Short
     fun uniffi_ndr_ffi_checksum_constructor_invitehandle_create_new(
     ): Short
     fun uniffi_ndr_ffi_checksum_constructor_invitehandle_deserialize(
@@ -1320,6 +1326,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_send_typing() != 11765.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_setup_user() != 27115.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_ndr_ffi_checksum_constructor_invitehandle_create_new() != 4301.toShort()) {
@@ -2672,6 +2681,11 @@ public interface SessionManagerHandleInterface {
      */
     fun `sendTyping`(`recipientPubkeyHex`: kotlin.String, `expiresAtSeconds`: kotlin.ULong?): List<kotlin.String>
     
+    /**
+     * Subscribe to a user's AppKeys/device-invite streams and converge sessions.
+     */
+    fun `setupUser`(`userPubkeyHex`: kotlin.String)
+    
     companion object
 }
 
@@ -3154,6 +3168,21 @@ open class SessionManagerHandle: Disposable, AutoCloseable, SessionManagerHandle
     }
     )
     }
+    
+
+    
+    /**
+     * Subscribe to a user's AppKeys/device-invite streams and converge sessions.
+     */
+    @Throws(NdrException::class)override fun `setupUser`(`userPubkeyHex`: kotlin.String)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(NdrException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ndr_ffi_fn_method_sessionmanagerhandle_setup_user(
+        it, FfiConverterString.lower(`userPubkeyHex`),_status)
+}
+    }
+    
     
 
     

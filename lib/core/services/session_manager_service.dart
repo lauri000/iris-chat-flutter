@@ -104,6 +104,39 @@ class SessionManagerService {
     });
   }
 
+  Future<void> setupUser(String userPubkeyHex) async {
+    await _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      await manager.setupUser(userPubkeyHex);
+      await _drainEventsUnlocked();
+    });
+  }
+
+  Future<void> setupUsers(Iterable<String> userPubkeysHex) async {
+    final ordered = <String>[];
+    final seen = <String>{};
+    for (final raw in userPubkeysHex) {
+      final normalized = raw.trim().toLowerCase();
+      if (normalized.isEmpty || !seen.add(normalized)) continue;
+      ordered.add(normalized);
+    }
+    if (ordered.isEmpty) return;
+
+    await _runExclusive(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+      for (final pubkeyHex in ordered) {
+        await manager.setupUser(pubkeyHex);
+      }
+      await _drainEventsUnlocked();
+    });
+  }
+
   Future<List<String>> sendText({
     required String recipientPubkeyHex,
     required String text,

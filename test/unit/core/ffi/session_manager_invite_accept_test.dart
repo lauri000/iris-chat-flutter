@@ -32,6 +32,8 @@ void main() {
                 'deviceId': 'device-d',
                 'createdNewSession': false,
               };
+            case 'sessionManagerSetupUser':
+              return null;
             default:
               throw MissingPluginException('No mock for ${call.method}');
           }
@@ -91,5 +93,22 @@ void main() {
     );
     expect(result.deviceId, 'device-d');
     expect(result.createdNewSession, isFalse);
+  });
+
+  test('session manager can set up user discovery', () async {
+    final manager = await NdrFfi.createSessionManager(
+      ourPubkeyHex:
+          '5555555555555555555555555555555555555555555555555555555555555555',
+      ourIdentityPrivkeyHex:
+          '6666666666666666666666666666666666666666666666666666666666666666',
+      deviceId: 'device-e',
+    );
+
+    await expectLater(
+      manager.setupUser(
+        '7777777777777777777777777777777777777777777777777777777777777777',
+      ),
+      completes,
+    );
   });
 }

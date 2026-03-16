@@ -1183,6 +1183,11 @@ public protocol SessionManagerHandleProtocol : AnyObject {
      */
     func sendTyping(recipientPubkeyHex: String, expiresAtSeconds: UInt64?) throws  -> [String]
     
+    /**
+     * Subscribe to a user's AppKeys/device-invite streams and converge sessions.
+     */
+    func setupUser(userPubkeyHex: String) throws 
+    
 }
 
 /**
@@ -1559,6 +1564,16 @@ open func sendTyping(recipientPubkeyHex: String, expiresAtSeconds: UInt64?)throw
         FfiConverterOptionUInt64.lower(expiresAtSeconds),$0
     )
 })
+}
+    
+    /**
+     * Subscribe to a user's AppKeys/device-invite streams and converge sessions.
+     */
+open func setupUser(userPubkeyHex: String)throws  {try rustCallWithError(FfiConverterTypeNdrError.lift) {
+    uniffi_ndr_ffi_fn_method_sessionmanagerhandle_setup_user(self.uniffiClonePointer(),
+        FfiConverterString.lower(userPubkeyHex),$0
+    )
+}
 }
     
 
@@ -3326,6 +3341,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_send_typing() != 11765) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_setup_user() != 27115) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ndr_ffi_checksum_constructor_invitehandle_create_new() != 4301) {

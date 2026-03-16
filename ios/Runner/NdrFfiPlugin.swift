@@ -95,6 +95,8 @@ public class NdrFfiPlugin: NSObject, FlutterPlugin {
                 try handleSessionManagerNewWithStoragePath(call: call, result: result)
             case "sessionManagerInit":
                 try handleSessionManagerInit(call: call, result: result)
+            case "sessionManagerSetupUser":
+                try handleSessionManagerSetupUser(call: call, result: result)
             case "sessionManagerAcceptInviteFromUrl":
                 try handleSessionManagerAcceptInviteFromUrl(call: call, result: result)
             case "sessionManagerAcceptInviteFromEventJson":
@@ -632,6 +634,19 @@ public class NdrFfiPlugin: NSObject, FlutterPlugin {
             throw PluginError.handleNotFound("SessionManager handle not found: \(id)")
         }
         try manager.`init`()
+        result(nil)
+    }
+
+    private func handleSessionManagerSetupUser(call: FlutterMethodCall, result: FlutterResult) throws {
+        guard let args = call.arguments as? [String: Any],
+              let id = args["id"] as? String,
+              let userPubkeyHex = args["userPubkeyHex"] as? String else {
+            throw PluginError.invalidArguments("Missing id or userPubkeyHex")
+        }
+        guard let manager = sessionManagerHandles[id] else {
+            throw PluginError.handleNotFound("SessionManager handle not found: \(id)")
+        }
+        try manager.setupUser(userPubkeyHex: userPubkeyHex)
         result(nil)
     }
 
