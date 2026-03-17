@@ -37,6 +37,14 @@ The iOS library must be built on macOS. Follow these steps:
    cp rust/target/ios/bindings/ndr_ffi.swift /path/to/iris-chat-flutter/ios/Runner/
    ```
 
+5. Update the checked-in macOS host archive from the release build:
+   ```bash
+   cp rust/target/release/libndr_ffi.a /path/to/iris-chat-flutter/libndr_ffi.a
+   ```
+
+Do not copy `rust/target/debug/libndr_ffi.a` into `iris-chat-flutter`.
+The debug archive is much larger and is only for local debugging.
+
 ### Xcode Integration
 
 1. Open `ios/Runner.xcworkspace` in Xcode

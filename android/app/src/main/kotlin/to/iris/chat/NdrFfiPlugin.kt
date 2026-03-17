@@ -51,6 +51,8 @@ class NdrFfiPlugin : FlutterPlugin, MethodCallHandler {
                 "derivePublicKey" -> handleDerivePublicKey(call, result)
                 "createSignedAppKeysEvent" -> handleCreateSignedAppKeysEvent(call, result)
                 "parseAppKeysEvent" -> handleParseAppKeysEvent(call, result)
+                "resolveLatestAppKeysDevices" -> handleResolveLatestAppKeysDevices(call, result)
+                "resolveConversationCandidatePubkeys" -> handleResolveConversationCandidatePubkeys(call, result)
                 "createInvite" -> handleCreateInvite(call, result)
                 "inviteFromUrl" -> handleInviteFromUrl(call, result)
                 "inviteFromEventJson" -> handleInviteFromEventJson(call, result)
@@ -168,6 +170,42 @@ class NdrFfiPlugin : FlutterPlugin, MethodCallHandler {
             )
         }
         result.success(devices)
+    }
+
+    private fun handleResolveLatestAppKeysDevices(call: MethodCall, result: Result) {
+        val eventJsons = call.argument<List<String>>("eventJsons")
+            ?: throw IllegalArgumentException("Missing eventJsons")
+
+        val devices = resolveLatestAppKeysDevices(eventJsons).map { d ->
+            mapOf(
+                "identityPubkeyHex" to d.identityPubkeyHex,
+                "createdAt" to d.createdAt.toLong(),
+            )
+        }
+        result.success(devices)
+    }
+
+    private fun handleResolveConversationCandidatePubkeys(call: MethodCall, result: Result) {
+        val ownerPubkeyHex = call.argument<String>("ownerPubkeyHex")
+            ?: throw IllegalArgumentException("Missing ownerPubkeyHex")
+        val rumorPubkeyHex = call.argument<String>("rumorPubkeyHex")
+            ?: throw IllegalArgumentException("Missing rumorPubkeyHex")
+        val senderPubkeyHex = call.argument<String>("senderPubkeyHex")
+            ?: throw IllegalArgumentException("Missing senderPubkeyHex")
+        val rumorTagsArg = call.argument<List<Any>>("rumorTags") ?: emptyList()
+        val rumorTags = rumorTagsArg.map { tag ->
+            @Suppress("UNCHECKED_CAST")
+            (tag as? List<Any?>)?.map { it.toString() } ?: emptyList()
+        }
+
+        result.success(
+            resolveConversationCandidatePubkeys(
+                ownerPubkeyHex,
+                rumorPubkeyHex,
+                rumorTags,
+                senderPubkeyHex
+            )
+        )
     }
 
     // MARK: - Invite Creation

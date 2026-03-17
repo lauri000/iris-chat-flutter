@@ -39,6 +39,23 @@ flutter build apk --release
 flutter build ios --release
 ```
 
+### Native FFI Artifacts
+
+`iris-chat-flutter` checks in a host macOS static library at
+`libndr_ffi.a` for native macOS test/build use. Do not copy the debug Rust
+artifact into this repo.
+
+Use the release archive from `nostr-double-ratchet`:
+
+```bash
+cd ~/src/nostr-double-ratchet/rust
+cargo build -p ndr-ffi --release
+cp target/release/libndr_ffi.a ~/src/iris-chat-flutter/libndr_ffi.a
+```
+
+The debug archive in `target/debug/libndr_ffi.a` is much larger because it
+includes debug symbols and should not be committed.
+
 ## GitHub Release Signing (Optional)
 
 The release workflow auto-detects signing configuration from GitHub Actions secrets.
@@ -75,6 +92,9 @@ dart run build_runner build
 
 # Run tests
 flutter test
+
+# Check the committed macOS FFI artifact guard
+flutter test test/unit/macos/ndr_ffi_artifact_test.dart
 
 # Run analyzer
 flutter analyze

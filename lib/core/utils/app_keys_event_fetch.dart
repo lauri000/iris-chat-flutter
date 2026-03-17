@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 
+import '../ffi/ndr_ffi.dart';
+import '../ffi/models/models.dart';
 import '../services/nostr_service.dart';
 
 const _appKeysEventKind = 30078;
 const _appKeysDTagValue = 'double-ratchet/app-keys';
 
-Future<NostrEvent?> fetchLatestAppKeysEvent(
+Future<List<NostrEvent>> fetchAppKeysEvents(
   NostrService nostrService, {
   required String ownerPubkeyHex,
   Duration timeout = const Duration(seconds: 2),
@@ -13,26 +16,27 @@ Future<NostrEvent?> fetchLatestAppKeysEvent(
 }) async {
   final normalizedOwnerPubkeyHex = ownerPubkeyHex.trim().toLowerCase();
   if (normalizedOwnerPubkeyHex.isEmpty) {
-    return null;
+    return const <NostrEvent>[];
   }
 
   final subid = '$subscriptionLabel-${DateTime.now().microsecondsSinceEpoch}';
 
-  NostrEvent? best;
+  final events = <NostrEvent>[];
+  final seenEventIds = <String>{};
   var completed = false;
   Timer? settleTimer;
   late final StreamSubscription<NostrEvent> sub;
 
-  Future<NostrEvent?> finish() async {
-    if (completed) return best;
+  Future<List<NostrEvent>> finish() async {
+    if (completed) return events;
     completed = true;
     settleTimer?.cancel();
     await sub.cancel();
     nostrService.closeSubscription(subid);
-    return best;
+    return events;
   }
 
-  final completer = Completer<NostrEvent?>();
+  final completer = Completer<List<NostrEvent>>();
   void scheduleFinish() {
     if (completed) return;
     settleTimer?.cancel();
@@ -47,12 +51,9 @@ Future<NostrEvent?> fetchLatestAppKeysEvent(
     if (event.kind != _appKeysEventKind) return;
     if (event.pubkey.trim().toLowerCase() != normalizedOwnerPubkeyHex) return;
     if (event.getTagValue('d') != _appKeysDTagValue) return;
+    if (!seenEventIds.add(event.id)) return;
 
-    // Replaceable events are second-granularity. Prefer the later-delivered
-    // event when timestamps tie so rapid AppKeys updates do not drop devices.
-    if (best == null || event.createdAt >= best!.createdAt) {
-      best = event;
-    }
+    events.add(event);
     scheduleFinish();
   });
 
@@ -71,4 +72,28 @@ Future<NostrEvent?> fetchLatestAppKeysEvent(
   });
 
   return completer.future;
+}
+
+Future<List<FfiDeviceEntry>> resolveLatestAppKeysDevicesFromEvents(
+  List<NostrEvent> events,
+) async {
+  if (events.isEmpty) return const <FfiDeviceEntry>[];
+  return NdrFfi.resolveLatestAppKeysDevices(
+    events.map((event) => jsonEncode(event.toJson())).toList(),
+  );
+}
+
+Future<List<FfiDeviceEntry>> fetchLatestAppKeysDevices(
+  NostrService nostrService, {
+  required String ownerPubkeyHex,
+  Duration timeout = const Duration(seconds: 2),
+  String subscriptionLabel = 'appkeys-fetch',
+}) async {
+  final events = await fetchAppKeysEvents(
+    nostrService,
+    ownerPubkeyHex: ownerPubkeyHex,
+    timeout: timeout,
+    subscriptionLabel: subscriptionLabel,
+  );
+  return resolveLatestAppKeysDevicesFromEvents(events);
 }

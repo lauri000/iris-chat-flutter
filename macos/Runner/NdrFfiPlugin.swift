@@ -43,6 +43,10 @@ public class NdrFfiPlugin: NSObject, FlutterPlugin {
                 try handleCreateSignedAppKeysEvent(call: call, result: result)
             case "parseAppKeysEvent":
                 try handleParseAppKeysEvent(call: call, result: result)
+            case "resolveLatestAppKeysDevices":
+                try handleResolveLatestAppKeysDevices(call: call, result: result)
+            case "resolveConversationCandidatePubkeys":
+                try handleResolveConversationCandidatePubkeys(call: call, result: result)
             case "createInvite":
                 try handleCreateInvite(call: call, result: result)
             case "inviteFromUrl":
@@ -212,6 +216,43 @@ public class NdrFfiPlugin: NSObject, FlutterPlugin {
             ]
         }
         result(devices)
+    }
+
+    private func handleResolveLatestAppKeysDevices(call: FlutterMethodCall, result: FlutterResult) throws {
+        guard let args = call.arguments as? [String: Any],
+              let eventJsons = args["eventJsons"] as? [String] else {
+            throw PluginError.invalidArguments("Missing eventJsons")
+        }
+
+        let devices = try resolveLatestAppKeysDevices(eventJsons: eventJsons).map { d in
+            return [
+                "identityPubkeyHex": d.identityPubkeyHex,
+                "createdAt": d.createdAt,
+            ]
+        }
+        result(devices)
+    }
+
+    private func handleResolveConversationCandidatePubkeys(call: FlutterMethodCall, result: FlutterResult) throws {
+        guard let args = call.arguments as? [String: Any],
+              let ownerPubkeyHex = args["ownerPubkeyHex"] as? String,
+              let rumorPubkeyHex = args["rumorPubkeyHex"] as? String,
+              let senderPubkeyHex = args["senderPubkeyHex"] as? String else {
+            throw PluginError.invalidArguments(
+                "Missing ownerPubkeyHex, rumorPubkeyHex, or senderPubkeyHex"
+            )
+        }
+
+        let rumorTags = (args["rumorTags"] as? [[Any]])?.map { tag in
+            tag.map { String(describing: $0) }
+        } ?? []
+
+        result(resolveConversationCandidatePubkeys(
+            ownerPubkeyHex: ownerPubkeyHex,
+            rumorPubkeyHex: rumorPubkeyHex,
+            rumorTags: rumorTags,
+            senderPubkeyHex: senderPubkeyHex
+        ))
     }
 
     // MARK: - Invite Creation

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import '../../core/ffi/ndr_ffi.dart';
 import '../../core/services/app_focus_service.dart';
 import '../../core/services/database_service.dart';
 import '../../core/services/desktop_notification_service.dart';

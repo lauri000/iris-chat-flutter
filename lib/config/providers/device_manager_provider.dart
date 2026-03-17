@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/ffi/ndr_ffi.dart';
@@ -206,16 +204,15 @@ class DeviceManagerNotifier extends StateNotifier<DeviceManagerState> {
             device.createdAt,
     };
 
-    final latest = await fetchLatestAppKeysEvent(
+    final latestDevices = await fetchLatestAppKeysDevices(
       _nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
       subscriptionLabel: 'appkeys-settings',
     );
-    if (latest == null) return fromState;
+    if (latestDevices.isEmpty) return fromState;
 
-    final parsed = await NdrFfi.parseAppKeysEvent(jsonEncode(latest.toJson()));
     final merged = <String, int>{};
-    for (final device in parsed) {
+    for (final device in latestDevices) {
       final key = _normalizeHex(device.identityPubkeyHex);
       if (key == null) continue;
       merged[key] = device.createdAt;

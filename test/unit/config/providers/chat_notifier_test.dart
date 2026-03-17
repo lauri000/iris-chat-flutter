@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/core/ffi/models/send_text_with_inner_id_result.dart';
@@ -59,6 +60,8 @@ class FakeAppFocusState implements AppFocusState {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late ChatNotifier notifier;
   late MockMessageLocalDatasource mockMessageDatasource;
   late MockSessionLocalDatasource mockSessionDatasource;
@@ -66,6 +69,7 @@ void main() {
   late FakeDesktopNotificationService fakeDesktopNotificationService;
   late FakeAppFocusState fakeAppFocusState;
   late bool previousLoggerEnabled;
+  const channel = MethodChannel('to.iris.chat/ndr_ffi');
 
   setUp(() {
     mockMessageDatasource = MockMessageLocalDatasource();
@@ -94,6 +98,29 @@ void main() {
     ).thenAnswer((_) async {});
     when(() => mockSessionManagerService.ownerPubkeyHex).thenReturn(null);
     when(() => mockSessionManagerService.devicePubkeyHex).thenReturn(null);
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
+          if (methodCall.method != 'resolveConversationCandidatePubkeys') {
+            return null;
+          }
+
+          final args = Map<dynamic, dynamic>.from(
+            methodCall.arguments as Map<dynamic, dynamic>,
+          );
+          return _resolveConversationCandidates(
+            ownerPubkeyHex: args['ownerPubkeyHex'] as String,
+            rumorPubkeyHex: args['rumorPubkeyHex'] as String,
+            rumorTags: (args['rumorTags'] as List<dynamic>)
+                .map(
+                  (tag) => (tag as List<dynamic>)
+                      .map((entry) => entry.toString())
+                      .toList(),
+                )
+                .toList(),
+            senderPubkeyHex: args['senderPubkeyHex'] as String,
+          );
+        });
   });
 
   setUpAll(() {
@@ -122,6 +149,11 @@ void main() {
 
   tearDownAll(() {
     Logger.enabled = previousLoggerEnabled;
+  });
+
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
   });
 
   group('ChatNotifier', () {
@@ -1192,7 +1224,8 @@ void main() {
             () => mockMessageDatasource.messageExists(any()),
           ).thenAnswer((_) async => false);
           when(
-            () => mockSessionDatasource.getSessionByRecipient(senderDevicePubkey),
+            () =>
+                mockSessionDatasource.getSessionByRecipient(senderDevicePubkey),
           ).thenAnswer((_) async => directSession);
           when(
             () => mockMessageDatasource.saveMessage(any()),
@@ -1237,7 +1270,9 @@ void main() {
             () => mockMessageDatasource.messageExists(any()),
           ).thenAnswer((_) async => false);
           when(
-            () => mockSessionDatasource.getSessionByRecipient(linkedOwnDevicePubkey),
+            () => mockSessionDatasource.getSessionByRecipient(
+              linkedOwnDevicePubkey,
+            ),
           ).thenAnswer((_) async => null);
           when(
             () => mockSessionDatasource.getSessionByRecipient(ownerPubkey),
@@ -1265,7 +1300,9 @@ void main() {
             notifier.state.messages[ownerPubkey]!.single.text,
             'hello from my linked device via owner sender',
           );
-          verify(() => mockSessionManagerService.setupUser(ownerPubkey)).called(1);
+          verify(
+            () => mockSessionManagerService.setupUser(ownerPubkey),
+          ).called(1);
           verify(() => mockSessionDatasource.saveSession(any())).called(1);
           verify(() => mockMessageDatasource.saveMessage(any())).called(1);
         },
@@ -1291,7 +1328,9 @@ void main() {
             () => mockMessageDatasource.messageExists(any()),
           ).thenAnswer((_) async => false);
           when(
-            () => mockSessionDatasource.getSessionByRecipient(linkedOwnDevicePubkey),
+            () => mockSessionDatasource.getSessionByRecipient(
+              linkedOwnDevicePubkey,
+            ),
           ).thenAnswer((_) async => directSession);
           when(
             () => mockMessageDatasource.saveMessage(any()),
@@ -1372,7 +1411,9 @@ void main() {
             notifier.state.messages[session.id]!.single.text,
             'hello from my linked device',
           );
-          verify(() => mockSessionManagerService.setupUser(peerPubkey)).called(1);
+          verify(
+            () => mockSessionManagerService.setupUser(peerPubkey),
+          ).called(1);
           verify(() => mockMessageDatasource.saveMessage(any())).called(1);
         },
       );
@@ -1920,4 +1961,52 @@ void main() {
       });
     });
   });
+}
+
+List<String> _resolveConversationCandidates({
+  required String ownerPubkeyHex,
+  required String rumorPubkeyHex,
+  required List<List<String>> rumorTags,
+  required String senderPubkeyHex,
+}) {
+  final owner = ownerPubkeyHex.trim().toLowerCase();
+  final rumorAuthor = rumorPubkeyHex.trim().toLowerCase();
+  final sender = senderPubkeyHex.trim().toLowerCase();
+  final pTag = _firstTagValue(rumorTags, 'p')?.trim().toLowerCase();
+  final candidates = <String>[];
+
+  void addCandidate(String? candidate) {
+    if (candidate == null ||
+        candidate.isEmpty ||
+        candidates.contains(candidate)) {
+      return;
+    }
+    candidates.add(candidate);
+  }
+
+  final isSelfTargetedRumor =
+      (rumorAuthor == owner || sender == owner) &&
+      (pTag == null || pTag.isEmpty || pTag == owner);
+
+  if (isSelfTargetedRumor) {
+    if (rumorAuthor != owner) addCandidate(rumorAuthor);
+    if (sender != owner) addCandidate(sender);
+    addCandidate(owner);
+    return candidates;
+  }
+
+  final rumorPeer = rumorAuthor == owner || sender == owner
+      ? pTag
+      : rumorAuthor;
+  addCandidate(rumorPeer);
+  addCandidate(sender);
+  return candidates;
+}
+
+String? _firstTagValue(List<List<String>> tags, String name) {
+  for (final tag in tags) {
+    if (tag.isEmpty || tag.first != name || tag.length < 2) continue;
+    return tag[1];
+  }
+  return null;
 }

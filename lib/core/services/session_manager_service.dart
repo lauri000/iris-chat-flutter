@@ -411,7 +411,8 @@ class SessionManagerService {
       'recentDecryptedEvents': List<Map<String, dynamic>>.from(
         _debugRecentDecryptedEvents,
       ),
-      'lastOwnerSelfSessionBootstrap': _debugLastOwnerSelfSessionBootstrap == null
+      'lastOwnerSelfSessionBootstrap':
+          _debugLastOwnerSelfSessionBootstrap == null
           ? null
           : Map<String, dynamic>.from(_debugLastOwnerSelfSessionBootstrap!),
     };
@@ -520,7 +521,7 @@ class SessionManagerService {
     final seenEventIds = <String>{};
 
     for (final ownerPubkeyHex in orderedOwners) {
-      final appKeysEvent = await fetchLatestAppKeysEvent(
+      final appKeysEventsForOwner = await fetchAppKeysEvents(
         _nostrService,
         ownerPubkeyHex: ownerPubkeyHex,
         timeout: const Duration(seconds: 1),
@@ -528,20 +529,22 @@ class SessionManagerService {
       );
       final devicePubkeys = <String>{ownerPubkeyHex};
 
-      if (appKeysEvent != null && seenEventIds.add(appKeysEvent.id)) {
-        appKeysEvents.add(appKeysEvent);
-        try {
-          final parsed = await NdrFfi.parseAppKeysEvent(
-            jsonEncode(appKeysEvent.toJson()),
-          );
-          for (final device in parsed) {
-            final normalized = device.identityPubkeyHex.trim().toLowerCase();
-            if (normalized.isNotEmpty) {
-              devicePubkeys.add(normalized);
-            }
-          }
-        } catch (_) {}
+      for (final appKeysEvent in appKeysEventsForOwner) {
+        if (seenEventIds.add(appKeysEvent.id)) {
+          appKeysEvents.add(appKeysEvent);
+        }
       }
+      try {
+        final parsed = await resolveLatestAppKeysDevicesFromEvents(
+          appKeysEventsForOwner,
+        );
+        for (final device in parsed) {
+          final normalized = device.identityPubkeyHex.trim().toLowerCase();
+          if (normalized.isNotEmpty) {
+            devicePubkeys.add(normalized);
+          }
+        }
+      } catch (_) {}
 
       final latestInvites = await fetchLatestDeviceInviteEvents(
         _nostrService,
@@ -672,7 +675,8 @@ class SessionManagerService {
           return;
         }
 
-        final inviterSessionStateJson = await responseResult.session.stateJson();
+        final inviterSessionStateJson = await responseResult.session
+            .stateJson();
         _debugLastOwnerSelfSessionBootstrap = {
           ...?_debugLastOwnerSelfSessionBootstrap,
           'step': 'import_session_state',

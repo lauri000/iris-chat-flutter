@@ -220,6 +220,38 @@ class NdrFfi {
         .toList();
   }
 
+  /// Resolve the latest authorized device list from a set of AppKeys events.
+  static Future<List<FfiDeviceEntry>> resolveLatestAppKeysDevices(
+    List<String> eventJsons,
+  ) async {
+    final result = await _channel.invokeMethod<List>(
+      'resolveLatestAppKeysDevices',
+      {'eventJsons': eventJsons},
+    );
+    if (result == null) return [];
+    return result
+        .map((e) => FfiDeviceEntry.fromMap(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
+  /// Resolve ordered conversation candidates for a decrypted rumor.
+  static Future<List<String>> resolveConversationCandidatePubkeys({
+    required String ownerPubkeyHex,
+    required String rumorPubkeyHex,
+    required List<List<String>> rumorTags,
+    required String senderPubkeyHex,
+  }) async {
+    final result = await _channel
+        .invokeMethod<List>('resolveConversationCandidatePubkeys', {
+          'ownerPubkeyHex': ownerPubkeyHex,
+          'rumorPubkeyHex': rumorPubkeyHex,
+          'rumorTags': rumorTags,
+          'senderPubkeyHex': senderPubkeyHex,
+        });
+    if (result == null) return [];
+    return result.map((e) => e.toString()).toList();
+  }
+
   /// Initialize a new session directly (advanced use).
   static Future<SessionHandle> sessionInit({
     required String theirEphemeralPubkeyHex,

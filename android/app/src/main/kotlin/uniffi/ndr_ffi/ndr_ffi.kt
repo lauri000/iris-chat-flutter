@@ -824,6 +824,10 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -959,6 +963,10 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_ndr_ffi_fn_func_parse_app_keys_event(`eventJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_ndr_ffi_fn_func_resolve_conversation_candidate_pubkeys(`ownerPubkeyHex`: RustBuffer.ByValue,`rumorPubkeyHex`: RustBuffer.ByValue,`rumorTags`: RustBuffer.ByValue,`senderPubkeyHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ndr_ffi_fn_func_resolve_latest_app_keys_devices(`eventJsons`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_ndr_ffi_fn_func_version(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun ffi_ndr_ffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1080,6 +1088,10 @@ internal interface UniffiLib : Library {
     fun uniffi_ndr_ffi_checksum_func_generate_keypair(
     ): Short
     fun uniffi_ndr_ffi_checksum_func_parse_app_keys_event(
+    ): Short
+    fun uniffi_ndr_ffi_checksum_func_resolve_conversation_candidate_pubkeys(
+    ): Short
+    fun uniffi_ndr_ffi_checksum_func_resolve_latest_app_keys_devices(
     ): Short
     fun uniffi_ndr_ffi_checksum_func_version(
     ): Short
@@ -1206,6 +1218,12 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_ndr_ffi_checksum_func_parse_app_keys_event() != 33390.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ndr_ffi_checksum_func_resolve_conversation_candidate_pubkeys() != 3184.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ndr_ffi_checksum_func_resolve_latest_app_keys_devices() != 26843.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_ndr_ffi_checksum_func_version() != 58200.toShort()) {
@@ -4355,6 +4373,34 @@ public object FfiConverterSequenceTypePubSubEvent: FfiConverterRustBuffer<List<P
         }
     }
 }
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceSequenceString: FfiConverterRustBuffer<List<List<kotlin.String>>> {
+    override fun read(buf: ByteBuffer): List<List<kotlin.String>> {
+        val len = buf.getInt()
+        return List<List<kotlin.String>>(len) {
+            FfiConverterSequenceString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<List<kotlin.String>>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterSequenceString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<List<kotlin.String>>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterSequenceString.write(it, buf)
+        }
+    }
+}
         /**
          * Create a signed AppKeys event JSON for publishing to relays.
          */
@@ -4401,6 +4447,31 @@ public object FfiConverterSequenceTypePubSubEvent: FfiConverterRustBuffer<List<P
     uniffiRustCallWithError(NdrException) { _status ->
     UniffiLib.INSTANCE.uniffi_ndr_ffi_fn_func_parse_app_keys_event(
         FfiConverterString.lower(`eventJson`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Resolve conversation routing candidates for a decrypted rumor.
+         */ fun `resolveConversationCandidatePubkeys`(`ownerPubkeyHex`: kotlin.String, `rumorPubkeyHex`: kotlin.String, `rumorTags`: List<List<kotlin.String>>, `senderPubkeyHex`: kotlin.String): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_ndr_ffi_fn_func_resolve_conversation_candidate_pubkeys(
+        FfiConverterString.lower(`ownerPubkeyHex`),FfiConverterString.lower(`rumorPubkeyHex`),FfiConverterSequenceSequenceString.lower(`rumorTags`),FfiConverterString.lower(`senderPubkeyHex`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Resolve the latest authorized device list from a set of AppKeys event JSON strings.
+         */
+    @Throws(NdrException::class) fun `resolveLatestAppKeysDevices`(`eventJsons`: List<kotlin.String>): List<FfiDeviceEntry> {
+            return FfiConverterSequenceTypeFfiDeviceEntry.lift(
+    uniffiRustCallWithError(NdrException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ndr_ffi_fn_func_resolve_latest_app_keys_devices(
+        FfiConverterSequenceString.lower(`eventJsons`),_status)
 }
     )
     }

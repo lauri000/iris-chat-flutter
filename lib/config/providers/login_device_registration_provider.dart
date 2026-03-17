@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:nostr/nostr.dart' as nostr;
@@ -168,16 +167,15 @@ class LoginDeviceRegistrationServiceImpl
   }
 
   Future<Map<String, int>> _loadLatestDevicesMap(String ownerPubkeyHex) async {
-    final latest = await fetchLatestAppKeysEvent(
+    final latestDevices = await fetchLatestAppKeysDevices(
       _nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
       subscriptionLabel: 'appkeys-login',
     );
-    if (latest == null) return <String, int>{};
+    if (latestDevices.isEmpty) return <String, int>{};
 
-    final parsed = await NdrFfi.parseAppKeysEvent(jsonEncode(latest.toJson()));
     final merged = <String, int>{};
-    for (final device in parsed) {
+    for (final device in latestDevices) {
       final key = _normalizeHex(device.identityPubkeyHex);
       if (key == null) continue;
       merged[key] = device.createdAt;

@@ -817,19 +817,13 @@ class InviteNotifier extends StateNotifier<InviteState> {
     final nostrService = _ref.read(nostrServiceProvider);
     final localDevices = _ref.read(deviceManagerProvider).devices;
 
-    final existing = await _fetchLatestAppKeysEventWithRetry(
+    final relayDevices = await _fetchLatestAppKeysDevicesWithRetry(
       nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
       retry: localDevices.isEmpty,
     );
 
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final relayDevices = <FfiDeviceEntry>[];
-    if (existing != null) {
-      relayDevices.addAll(
-        await NdrFfi.parseAppKeysEvent(jsonEncode(existing.toJson())),
-      );
-    }
     final devices = buildMergedDeviceMap(
       localDevices: localDevices,
       relayDevices: relayDevices,
@@ -850,12 +844,12 @@ class InviteNotifier extends StateNotifier<InviteState> {
     await nostrService.publishEvent(eventJson);
   }
 
-  Future<NostrEvent?> _fetchLatestAppKeysEvent(
+  Future<List<FfiDeviceEntry>> _fetchLatestAppKeysDevices(
     NostrService nostrService, {
     required String ownerPubkeyHex,
     Duration timeout = const Duration(seconds: 2),
   }) async {
-    return fetchLatestAppKeysEvent(
+    return fetchLatestAppKeysDevices(
       nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
       timeout: timeout,
@@ -863,20 +857,20 @@ class InviteNotifier extends StateNotifier<InviteState> {
     );
   }
 
-  Future<NostrEvent?> _fetchLatestAppKeysEventWithRetry(
+  Future<List<FfiDeviceEntry>> _fetchLatestAppKeysDevicesWithRetry(
     NostrService nostrService, {
     required String ownerPubkeyHex,
     required bool retry,
   }) async {
-    final first = await _fetchLatestAppKeysEvent(
+    final first = await _fetchLatestAppKeysDevices(
       nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
       timeout: retry ? const Duration(seconds: 1) : const Duration(seconds: 2),
     );
-    if (first != null || !retry) return first;
+    if (first.isNotEmpty || !retry) return first;
 
     await Future<void>.delayed(const Duration(milliseconds: 400));
-    return _fetchLatestAppKeysEvent(
+    return _fetchLatestAppKeysDevices(
       nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
       timeout: const Duration(seconds: 1),

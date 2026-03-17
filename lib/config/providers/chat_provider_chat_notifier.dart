@@ -631,52 +631,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (!mounted) return null;
     final owner = ownerPubkeyHex?.toLowerCase().trim();
     final sender = senderPubkeyHex.toLowerCase().trim();
-    final rumorAuthor = rumor.pubkey.toLowerCase().trim();
-    final pTagPubkey = getFirstTagValue(rumor.tags, 'p')?.toLowerCase().trim();
+    if (sender.isEmpty) return null;
 
-    final isSelfTargetedRumor =
-        owner != null &&
-        (rumorAuthor == owner || sender == owner) &&
-        (pTagPubkey == null || pTagPubkey.isEmpty || pTagPubkey == owner);
-    if (isSelfTargetedRumor) {
-      final selfSessionCandidates = <String>[];
-      if (rumorAuthor.isNotEmpty && rumorAuthor != owner) {
-        selfSessionCandidates.add(rumorAuthor);
-      }
-      if (sender.isNotEmpty &&
-          sender != owner &&
-          !selfSessionCandidates.contains(sender)) {
-        selfSessionCandidates.add(sender);
-      }
-
-      for (final candidate in selfSessionCandidates) {
-        final existingSenderSession = await _sessionDatasource.getSessionByRecipient(
-          candidate,
-        );
-        if (!mounted) return null;
-        if (existingSenderSession != null) {
-          return candidate;
-        }
-      }
-      return owner;
-    }
-
-    final rumorPeer = owner != null
-        ? resolveRumorPeerPubkey(
+    final candidates = owner == null
+        ? <String>[sender]
+        : await NdrFfi.resolveConversationCandidatePubkeys(
             ownerPubkeyHex: owner,
-            rumor: rumor,
-            senderPubkeyHex: senderPubkeyHex,
-          )
-        : sender;
-    final rumorPeerNormalized = rumorPeer?.toLowerCase().trim();
-
-    final candidates = <String>[];
-    if (rumorPeerNormalized != null && rumorPeerNormalized.isNotEmpty) {
-      candidates.add(rumorPeerNormalized);
-    }
-    if (sender.isNotEmpty && !candidates.contains(sender)) {
-      candidates.add(sender);
-    }
+            rumorPubkeyHex: rumor.pubkey,
+            rumorTags: rumor.tags,
+            senderPubkeyHex: sender,
+          );
 
     for (final candidate in candidates) {
       if (!mounted) return null;
@@ -686,6 +650,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
       if (!mounted) return null;
       if (existing != null) return candidate;
+    }
+
+    if (owner != null && candidates.isNotEmpty && candidates.last == owner) {
+      return owner;
     }
 
     for (final candidate in candidates) {
