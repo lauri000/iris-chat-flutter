@@ -115,6 +115,55 @@ ProviderContainer _makeContainer({
   );
 }
 
+Future<void> _runAppBootstrap(ProviderContainer container) async {
+  Future<void> bootstrapCurrentSessions() async {
+    final sessionManager = container.read(sessionManagerServiceProvider);
+    final bootstrapTargets = sessionBootstrapTargets(
+      sessionRecipientPubkeysHex: container
+          .read(sessionStateProvider)
+          .sessions
+          .map((session) => session.recipientPubkeyHex),
+      ownerPubkeyHex: sessionManager.ownerPubkeyHex,
+    );
+    await sessionManager.setupUsers(bootstrapTargets);
+    final relayBootstrapTargets = await sessionRelayBootstrapTargets(
+      bootstrapTargets: bootstrapTargets,
+      getActiveSessionState: sessionManager.getActiveSessionState,
+    );
+    if (relayBootstrapTargets.isNotEmpty) {
+      await sessionManager.bootstrapUsersFromRelay(relayBootstrapTargets);
+    }
+  }
+
+  await container.read(sessionStateProvider.notifier).loadSessions();
+  await container.read(groupStateProvider.notifier).loadGroups();
+  await bootstrapCurrentSessions();
+  await container.read(inviteStateProvider.notifier).loadInvites();
+  await container
+      .read(inviteStateProvider.notifier)
+      .bootstrapInviteResponsesFromRelay();
+  await container.read(sessionStateProvider.notifier).loadSessions();
+  await bootstrapCurrentSessions();
+  final sessionManager = container.read(sessionManagerServiceProvider);
+  final bootstrapTargets = sessionBootstrapTargets(
+    sessionRecipientPubkeysHex: container
+        .read(sessionStateProvider)
+        .sessions
+        .map((session) => session.recipientPubkeyHex),
+    ownerPubkeyHex: sessionManager.ownerPubkeyHex,
+  );
+  await sessionManager.refreshSubscription();
+  await Future<void>.delayed(const Duration(milliseconds: 150));
+  await sessionManager.repairRecentlyActiveLinkedDeviceRecords(
+    bootstrapTargets,
+  );
+  container.read(messageSubscriptionProvider);
+  await container.read(inviteStateProvider.notifier).ensurePublishedPublicInvite();
+  await container
+      .read(sessionManagerServiceProvider)
+      .bootstrapOwnerSelfSessionIfNeeded();
+}
+
 Map<String, dynamic> _payloadFor(Map<String, dynamic> command) {
   final payload = command['payload'];
   if (payload is Map<String, dynamic>) return payload;
@@ -191,6 +240,45 @@ _MessageMatch? _findMessageByText(
     }
   }
   return null;
+}
+
+Map<String, dynamic> _debugStateForTimeout(ProviderContainer container) {
+  final authState = container.read(authStateProvider);
+  final sessionManager = container.read(sessionManagerServiceProvider);
+  final sessions = container.read(sessionStateProvider).sessions;
+  final messages = container.read(chatStateProvider).messages;
+
+  return {
+    'auth': {
+      'isAuthenticated': authState.isAuthenticated,
+      'ownerPubkeyHex': authState.pubkeyHex,
+      'devicePubkeyHex': authState.devicePubkeyHex,
+    },
+    'sessions': [
+      for (final session in sessions)
+        {
+          'id': session.id,
+          'recipientPubkeyHex': session.recipientPubkeyHex,
+          'createdAt': session.createdAt.toIso8601String(),
+          'isInitiator': session.isInitiator,
+        },
+    ],
+    'messages': {
+      for (final entry in messages.entries)
+        entry.key: [
+          for (final message in entry.value)
+            {
+              'id': message.id,
+              'text': message.text,
+              'isIncoming': message.isIncoming,
+              'eventId': message.eventId,
+              'rumorId': message.rumorId,
+            },
+        ],
+    },
+    'sessionManager': sessionManager.debugSnapshot(),
+    'nostr': container.read(nostrServiceProvider).debugSnapshot(),
+  };
 }
 
 Future<String?> _findSessionIdByRecipient(
@@ -658,27 +746,7 @@ Future<void> _handleCommand({
                 deviceId: remoteDeviceId,
               );
 
-          // Mirror app bootstrap for linked-device login so invite/session
-          // transport is fully republished before interop assertions run.
-          await container.read(sessionStateProvider.notifier).loadSessions();
-          final sessionManager = container.read(sessionManagerServiceProvider);
-          await sessionManager.setupUsers(
-            sessionBootstrapTargets(
-              sessionRecipientPubkeysHex: container
-                  .read(sessionStateProvider)
-                  .sessions
-                  .map((session) => session.recipientPubkeyHex),
-              ownerPubkeyHex: sessionManager.ownerPubkeyHex,
-            ),
-          );
-          await container.read(inviteStateProvider.notifier).loadInvites();
-          await container
-              .read(inviteStateProvider.notifier)
-              .bootstrapInviteResponsesFromRelay();
-          container.read(messageSubscriptionProvider);
-          await container
-              .read(inviteStateProvider.notifier)
-              .ensurePublishedPublicInvite();
+          await _runAppBootstrap(container);
 
           final authState = container.read(authStateProvider);
           if (!authState.isAuthenticated || authState.pubkeyHex == null) {
@@ -918,7 +986,7 @@ Future<void> _handleCommand({
 
         if (!received) {
           throw TimeoutException(
-            'Timed out waiting for message text',
+            'Timed out waiting for message text\n${jsonEncode(_debugStateForTimeout(container))}',
             Duration(milliseconds: timeoutMs),
           );
         }
@@ -976,7 +1044,7 @@ Future<void> _handleCommand({
 
         if (match == null) {
           throw TimeoutException(
-            'Timed out waiting for message text',
+            'Timed out waiting for message text\n${jsonEncode(_debugStateForTimeout(container))}',
             Duration(milliseconds: timeoutMs),
           );
         }
@@ -1325,18 +1393,7 @@ void main() {
         isTrue,
         reason: authState.error ?? 'Bridge auth failed',
       );
-      // Start invite/message bridge wiring.
-      container.read(messageSubscriptionProvider);
-
-      await container
-          .read(inviteStateProvider.notifier)
-          .ensurePublishedPublicInvite();
-
-      await container.read(sessionStateProvider.notifier).loadSessions();
-      await container.read(inviteStateProvider.notifier).loadInvites();
-      await container
-          .read(inviteStateProvider.notifier)
-          .bootstrapInviteResponsesFromRelay();
+      await _runAppBootstrap(container);
 
       final authStateSnapshot = container.read(authStateProvider);
       final pubkeyHex = authStateSnapshot.pubkeyHex;

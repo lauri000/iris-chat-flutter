@@ -1173,6 +1173,211 @@ void main() {
       );
 
       test(
+        'prefers an existing direct sender-device session for self-targeted rumors',
+        () async {
+          const ownerPubkey =
+              '1111111111111111111111111111111111111111111111111111111111111111';
+          const senderDevicePubkey =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+          final directSession = ChatSession(
+            id: 'session-direct-device',
+            recipientPubkeyHex: senderDevicePubkey,
+            createdAt: DateTime.now(),
+          );
+
+          when(
+            () => mockSessionManagerService.ownerPubkeyHex,
+          ).thenReturn(ownerPubkey);
+          when(
+            () => mockMessageDatasource.messageExists(any()),
+          ).thenAnswer((_) async => false);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(senderDevicePubkey),
+          ).thenAnswer((_) async => directSession);
+          when(
+            () => mockMessageDatasource.saveMessage(any()),
+          ).thenAnswer((_) async {});
+
+          const selfRumorJson =
+              '{"id":"self-msg-direct-1","pubkey":"$ownerPubkey","created_at":1700000004,"kind":14,"content":"hello from my other device","tags":[["p","$ownerPubkey"]]}';
+
+          final received = await notifier.receiveDecryptedMessage(
+            senderDevicePubkey,
+            selfRumorJson,
+          );
+
+          expect(received, isNotNull);
+          expect(received!.sessionId, directSession.id);
+          expect(received.isOutgoing, isTrue);
+          expect(notifier.state.messages[directSession.id], isNotNull);
+          expect(
+            notifier.state.messages[directSession.id]!.single.text,
+            'hello from my other device',
+          );
+          verify(
+            () => mockSessionManagerService.setupUser(senderDevicePubkey),
+          ).called(1);
+          verifyNever(() => mockSessionDatasource.saveSession(any()));
+          verify(() => mockMessageDatasource.saveMessage(any())).called(1);
+        },
+      );
+
+      test(
+        'routes self-targeted rumor from linked own device to owner session when sender normalizes to owner',
+        () async {
+          const ownerPubkey =
+              '1111111111111111111111111111111111111111111111111111111111111111';
+          const linkedOwnDevicePubkey =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+
+          when(
+            () => mockSessionManagerService.ownerPubkeyHex,
+          ).thenReturn(ownerPubkey);
+          when(
+            () => mockMessageDatasource.messageExists(any()),
+          ).thenAnswer((_) async => false);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(linkedOwnDevicePubkey),
+          ).thenAnswer((_) async => null);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(ownerPubkey),
+          ).thenAnswer((_) async => null);
+          when(
+            () => mockSessionDatasource.saveSession(any()),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockMessageDatasource.saveMessage(any()),
+          ).thenAnswer((_) async {});
+
+          const selfRumorJson =
+              '{"id":"self-msg-linked-owner-1","pubkey":"$linkedOwnDevicePubkey","created_at":1700000005,"kind":14,"content":"hello from my linked device via owner sender","tags":[["p","$ownerPubkey"]]}';
+
+          final received = await notifier.receiveDecryptedMessage(
+            ownerPubkey,
+            selfRumorJson,
+          );
+
+          expect(received, isNotNull);
+          expect(received!.sessionId, ownerPubkey);
+          expect(received.isOutgoing, isTrue);
+          expect(notifier.state.messages[ownerPubkey], isNotNull);
+          expect(
+            notifier.state.messages[ownerPubkey]!.single.text,
+            'hello from my linked device via owner sender',
+          );
+          verify(() => mockSessionManagerService.setupUser(ownerPubkey)).called(1);
+          verify(() => mockSessionDatasource.saveSession(any())).called(1);
+          verify(() => mockMessageDatasource.saveMessage(any())).called(1);
+        },
+      );
+
+      test(
+        'prefers existing rumor-author device session when sender normalizes to owner',
+        () async {
+          const ownerPubkey =
+              '1111111111111111111111111111111111111111111111111111111111111111';
+          const linkedOwnDevicePubkey =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+          final directSession = ChatSession(
+            id: 'session-linked-device',
+            recipientPubkeyHex: linkedOwnDevicePubkey,
+            createdAt: DateTime.now(),
+          );
+
+          when(
+            () => mockSessionManagerService.ownerPubkeyHex,
+          ).thenReturn(ownerPubkey);
+          when(
+            () => mockMessageDatasource.messageExists(any()),
+          ).thenAnswer((_) async => false);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(linkedOwnDevicePubkey),
+          ).thenAnswer((_) async => directSession);
+          when(
+            () => mockMessageDatasource.saveMessage(any()),
+          ).thenAnswer((_) async {});
+
+          const selfRumorJson =
+              '{"id":"self-msg-linked-owner-2","pubkey":"$linkedOwnDevicePubkey","created_at":1700000006,"kind":14,"content":"hello from my linked device on direct session","tags":[["p","$ownerPubkey"]]}';
+
+          final received = await notifier.receiveDecryptedMessage(
+            ownerPubkey,
+            selfRumorJson,
+          );
+
+          expect(received, isNotNull);
+          expect(received!.sessionId, directSession.id);
+          expect(received.isOutgoing, isTrue);
+          expect(notifier.state.messages[directSession.id], isNotNull);
+          expect(
+            notifier.state.messages[directSession.id]!.single.text,
+            'hello from my linked device on direct session',
+          );
+          verify(
+            () => mockSessionManagerService.setupUser(linkedOwnDevicePubkey),
+          ).called(1);
+          verifyNever(() => mockSessionDatasource.saveSession(any()));
+          verify(() => mockMessageDatasource.saveMessage(any())).called(1);
+        },
+      );
+
+      test(
+        'routes sender-copy self message from a linked own device to the peer session',
+        () async {
+          const ownerPubkey =
+              '1111111111111111111111111111111111111111111111111111111111111111';
+          const peerPubkey =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+          const linkedOwnDevicePubkey =
+              '3333333333333333333333333333333333333333333333333333333333333333';
+
+          final session = ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex: peerPubkey,
+            createdAt: DateTime.now(),
+          );
+
+          when(
+            () => mockSessionManagerService.ownerPubkeyHex,
+          ).thenReturn(ownerPubkey);
+          when(
+            () => mockMessageDatasource.messageExists(any()),
+          ).thenAnswer((_) async => false);
+          when(
+            () => mockMessageDatasource.saveMessage(any()),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(any()),
+          ).thenAnswer((_) async => null);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(peerPubkey),
+          ).thenAnswer((_) async => session);
+          when(
+            () => mockSessionDatasource.saveSession(any()),
+          ).thenAnswer((_) async {});
+
+          const rumorJson =
+              '{"id":"self-copy-linked-1","pubkey":"$linkedOwnDevicePubkey","created_at":1700000003,"kind":14,"content":"hello from my linked device","tags":[["p","$peerPubkey"]]}';
+
+          final received = await notifier.receiveDecryptedMessage(
+            ownerPubkey,
+            rumorJson,
+          );
+
+          expect(received, isNotNull);
+          expect(received!.sessionId, session.id);
+          expect(received.isOutgoing, isTrue);
+          expect(notifier.state.messages[session.id], isNotNull);
+          expect(
+            notifier.state.messages[session.id]!.single.text,
+            'hello from my linked device',
+          );
+          verify(() => mockSessionManagerService.setupUser(peerPubkey)).called(1);
+          verify(() => mockMessageDatasource.saveMessage(any())).called(1);
+        },
+      );
+
+      test(
         'ignores typing when event second matches the last incoming message second',
         () async {
           const peerPubkey =

@@ -380,6 +380,7 @@ class SessionManagerService {
       <Map<String, dynamic>>[];
   final List<Map<String, dynamic>> _debugRecentDecryptedEvents =
       <Map<String, dynamic>>[];
+  Map<String, dynamic>? _debugLastOwnerSelfSessionBootstrap;
   final Map<String, String> _recentLinkedDeviceSenderByPeerOwner =
       <String, String>{};
   final Map<String, String> _preInitUserRecordJsonByOwner = <String, String>{};
@@ -410,6 +411,9 @@ class SessionManagerService {
       'recentDecryptedEvents': List<Map<String, dynamic>>.from(
         _debugRecentDecryptedEvents,
       ),
+      'lastOwnerSelfSessionBootstrap': _debugLastOwnerSelfSessionBootstrap == null
+          ? null
+          : Map<String, dynamic>.from(_debugLastOwnerSelfSessionBootstrap!),
     };
   }
 
@@ -568,6 +572,146 @@ class SessionManagerService {
       }
       await _drainEventsUnlocked();
     });
+  }
+
+  Future<bool> bootstrapOwnerSelfSessionIfNeeded() async {
+    return _runExclusiveIgnoringDisposed(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+
+      final ownerPubkeyHex = _ownerPubkeyHex?.trim().toLowerCase();
+      final devicePubkeyHex = _devicePubkeyHex?.trim().toLowerCase();
+      _debugLastOwnerSelfSessionBootstrap = {
+        'ownerPubkeyHex': ownerPubkeyHex,
+        'devicePubkeyHex': devicePubkeyHex,
+        'step': 'precheck',
+      };
+      if (ownerPubkeyHex == null ||
+          ownerPubkeyHex.isEmpty ||
+          devicePubkeyHex == null ||
+          devicePubkeyHex.isEmpty ||
+          ownerPubkeyHex == devicePubkeyHex) {
+        _debugLastOwnerSelfSessionBootstrap = {
+          ...?_debugLastOwnerSelfSessionBootstrap,
+          'step': 'skipped',
+          'reason': 'not_linked_device_or_missing_keys',
+        };
+        return;
+      }
+
+      final activeSessionState = await manager.getActiveSessionState(
+        ownerPubkeyHex,
+      );
+      if (activeSessionState != null && activeSessionState.isNotEmpty) {
+        _debugLastOwnerSelfSessionBootstrap = {
+          ...?_debugLastOwnerSelfSessionBootstrap,
+          'step': 'skipped',
+          'reason': 'active_session_exists',
+        };
+        return;
+      }
+
+      final ownerPrivkeyHex = await _authRepository.getOwnerPrivateKey();
+      final devicePrivkeyHex = await _authRepository.getPrivateKey();
+      if (ownerPrivkeyHex == null ||
+          ownerPrivkeyHex.isEmpty ||
+          devicePrivkeyHex == null ||
+          devicePrivkeyHex.isEmpty) {
+        _debugLastOwnerSelfSessionBootstrap = {
+          ...?_debugLastOwnerSelfSessionBootstrap,
+          'step': 'skipped',
+          'reason': 'missing_private_keys',
+        };
+        return;
+      }
+
+      InviteHandle? inviteHandle;
+      InviteAcceptResult? acceptResult;
+      InviteResponseResult? responseResult;
+
+      try {
+        _debugLastOwnerSelfSessionBootstrap = {
+          ...?_debugLastOwnerSelfSessionBootstrap,
+          'step': 'create_invite',
+        };
+        inviteHandle = await NdrFfi.createInvite(
+          inviterPubkeyHex: devicePubkeyHex,
+          deviceId: devicePubkeyHex,
+          maxUses: 1,
+        );
+        await inviteHandle.setPurpose('chat');
+        await inviteHandle.setOwnerPubkeyHex(ownerPubkeyHex);
+
+        _debugLastOwnerSelfSessionBootstrap = {
+          ...?_debugLastOwnerSelfSessionBootstrap,
+          'step': 'accept_with_owner',
+        };
+        acceptResult = await inviteHandle.acceptWithOwner(
+          inviteePubkeyHex: ownerPubkeyHex,
+          inviteePrivkeyHex: ownerPrivkeyHex,
+          deviceId: ownerPubkeyHex,
+          ownerPubkeyHex: ownerPubkeyHex,
+        );
+
+        _debugLastOwnerSelfSessionBootstrap = {
+          ...?_debugLastOwnerSelfSessionBootstrap,
+          'step': 'process_response',
+        };
+        responseResult = await inviteHandle.processResponse(
+          eventJson: acceptResult.responseEventJson,
+          inviterPrivkeyHex: devicePrivkeyHex,
+        );
+        if (responseResult == null) {
+          _debugLastOwnerSelfSessionBootstrap = {
+            ...?_debugLastOwnerSelfSessionBootstrap,
+            'step': 'process_response',
+            'reason': 'response_result_null',
+          };
+          return;
+        }
+
+        final inviterSessionStateJson = await responseResult.session.stateJson();
+        _debugLastOwnerSelfSessionBootstrap = {
+          ...?_debugLastOwnerSelfSessionBootstrap,
+          'step': 'import_session_state',
+          'sessionStateLength': inviterSessionStateJson.length,
+          'remoteDeviceId': responseResult.remoteDeviceId,
+        };
+        await manager.importSessionState(
+          peerPubkeyHex: ownerPubkeyHex,
+          stateJson: inviterSessionStateJson,
+          deviceId: responseResult.remoteDeviceId,
+        );
+        await _drainEventsUnlocked();
+        final importedSessionState = await manager.getActiveSessionState(
+          ownerPubkeyHex,
+        );
+        _debugLastOwnerSelfSessionBootstrap = {
+          ...?_debugLastOwnerSelfSessionBootstrap,
+          'step': 'done',
+          'activeSessionLength': importedSessionState?.length ?? 0,
+        };
+      } catch (error) {
+        _debugLastOwnerSelfSessionBootstrap = {
+          ...?_debugLastOwnerSelfSessionBootstrap,
+          'step': 'error',
+          'error': error.toString(),
+        };
+        rethrow;
+      } finally {
+        try {
+          await responseResult?.session.dispose();
+        } catch (_) {}
+        try {
+          await acceptResult?.session.dispose();
+        } catch (_) {}
+        try {
+          await inviteHandle?.dispose();
+        } catch (_) {}
+      }
+    }).then((_) => true).catchError((_) => false);
   }
 
   Future<void> repairRecentlyActiveLinkedDeviceRecords(

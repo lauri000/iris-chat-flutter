@@ -636,14 +636,37 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
     final isSelfTargetedRumor =
         owner != null &&
-        rumorAuthor == owner &&
+        (rumorAuthor == owner || sender == owner) &&
         (pTagPubkey == null || pTagPubkey.isEmpty || pTagPubkey == owner);
     if (isSelfTargetedRumor) {
+      final selfSessionCandidates = <String>[];
+      if (rumorAuthor.isNotEmpty && rumorAuthor != owner) {
+        selfSessionCandidates.add(rumorAuthor);
+      }
+      if (sender.isNotEmpty &&
+          sender != owner &&
+          !selfSessionCandidates.contains(sender)) {
+        selfSessionCandidates.add(sender);
+      }
+
+      for (final candidate in selfSessionCandidates) {
+        final existingSenderSession = await _sessionDatasource.getSessionByRecipient(
+          candidate,
+        );
+        if (!mounted) return null;
+        if (existingSenderSession != null) {
+          return candidate;
+        }
+      }
       return owner;
     }
 
     final rumorPeer = owner != null
-        ? resolveRumorPeerPubkey(ownerPubkeyHex: owner, rumor: rumor)
+        ? resolveRumorPeerPubkey(
+            ownerPubkeyHex: owner,
+            rumor: rumor,
+            senderPubkeyHex: senderPubkeyHex,
+          )
         : sender;
     final rumorPeerNormalized = rumorPeer?.toLowerCase().trim();
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:iris_chat/config/providers/app_bootstrap_provider.dart';
 import 'package:iris_chat/config/providers/auth_provider.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/config/providers/invite_provider.dart';
@@ -36,6 +37,20 @@ class _TestLoginInviteNotifier extends InviteNotifier {
   @override
   Future<void> ensurePublishedPublicInvite() async {
     ensurePublishedPublicInviteCalls += 1;
+  }
+}
+
+class _TestBootstrapNotifier extends AppBootstrapNotifier {
+  _TestBootstrapNotifier()
+    : retryCalls = 0,
+      super.fake(const AppBootstrapState(isReady: true));
+
+  int retryCalls;
+
+  @override
+  Future<void> retry() async {
+    retryCalls += 1;
+    state = const AppBootstrapState(isLoading: false, isReady: true);
   }
 }
 
@@ -135,7 +150,10 @@ void main() {
   Widget buildLoginScreen({
     AuthState? initialAuthState,
     void Function(_TestLoginInviteNotifier notifier)? onInviteNotifierCreated,
+    void Function(_TestBootstrapNotifier notifier)? onBootstrapNotifierCreated,
   }) {
+    final bootstrapNotifier = _TestBootstrapNotifier();
+    onBootstrapNotifierCreated?.call(bootstrapNotifier);
     return createTestApp(
       const LoginScreen(),
       overrides: [
@@ -150,6 +168,7 @@ void main() {
         loginDeviceRegistrationServiceProvider.overrideWithValue(
           mockLoginDeviceRegistrationService,
         ),
+        appBootstrapProvider.overrideWith((ref) => bootstrapNotifier),
         if (initialAuthState != null)
           authStateProvider.overrideWith((ref) {
             final notifier = AuthNotifier(mockAuthRepo);
@@ -161,7 +180,10 @@ void main() {
 
   Widget buildLoginScreenRouter({
     void Function(_TestLoginInviteNotifier notifier)? onInviteNotifierCreated,
+    void Function(_TestBootstrapNotifier notifier)? onBootstrapNotifierCreated,
   }) {
+    final bootstrapNotifier = _TestBootstrapNotifier();
+    onBootstrapNotifierCreated?.call(bootstrapNotifier);
     final router = GoRouter(
       initialLocation: '/login',
       routes: [
@@ -191,6 +213,7 @@ void main() {
         loginDeviceRegistrationServiceProvider.overrideWithValue(
           mockLoginDeviceRegistrationService,
         ),
+        appBootstrapProvider.overrideWith((ref) => bootstrapNotifier),
       ],
     );
   }
@@ -518,6 +541,7 @@ void main() {
         tester,
       ) async {
         final nsec = _validNsec();
+        _TestBootstrapNotifier? bootstrapNotifier;
 
         when(
           () => mockAuthRepo.login(
@@ -526,7 +550,13 @@ void main() {
           ),
         ).thenAnswer((_) async => const Identity(pubkeyHex: testPubkeyHex));
 
-        await tester.pumpWidget(buildLoginScreenRouter());
+        await tester.pumpWidget(
+          buildLoginScreenRouter(
+            onBootstrapNotifierCreated: (notifier) {
+              bootstrapNotifier = notifier;
+            },
+          ),
+        );
         await tester.pumpAndSettle();
 
         await tester.tap(find.text('Import Existing Key'));
@@ -553,6 +583,7 @@ void main() {
             devicePubkeyHex: generatedDevicePubkeyHex,
           ),
         ).called(1);
+        expect(bootstrapNotifier?.retryCalls, 1);
         expect(find.text('Chats Screen'), findsOneWidget);
       });
 
@@ -593,6 +624,7 @@ void main() {
         tester,
       ) async {
         final nsec = _validNsec();
+        _TestBootstrapNotifier? bootstrapNotifier;
 
         when(
           () => mockAuthRepo.login(
@@ -601,7 +633,13 @@ void main() {
           ),
         ).thenAnswer((_) async => const Identity(pubkeyHex: testPubkeyHex));
 
-        await tester.pumpWidget(buildLoginScreenRouter());
+        await tester.pumpWidget(
+          buildLoginScreenRouter(
+            onBootstrapNotifierCreated: (notifier) {
+              bootstrapNotifier = notifier;
+            },
+          ),
+        );
         await tester.pumpAndSettle();
 
         await tester.tap(find.text('Import Existing Key'));
@@ -626,6 +664,7 @@ void main() {
             devicePubkeyHex: any(named: 'devicePubkeyHex'),
           ),
         );
+        expect(bootstrapNotifier?.retryCalls, 1);
         expect(find.text('Chats Screen'), findsOneWidget);
       });
 

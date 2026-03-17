@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
 import 'auth_provider.dart';
 import 'chat_provider.dart';
 import 'invite_provider.dart';
@@ -141,6 +140,11 @@ class AppBootstrapNotifier extends StateNotifier<AppBootstrapState> {
         }
       }
 
+      Future<void> bootstrapOwnPublicSelfSession() async {
+        final sessionManager = ref.read(sessionManagerServiceProvider);
+        await sessionManager.bootstrapOwnerSelfSessionIfNeeded();
+      }
+
       final deadline = DateTime.now().add(_kMaxWait);
       while (mounted && runId == _runId) {
         await ref.read(sessionStateProvider.notifier).loadSessions();
@@ -203,6 +207,9 @@ class AppBootstrapNotifier extends StateNotifier<AppBootstrapState> {
         await ref
             .read(inviteStateProvider.notifier)
             .ensurePublishedPublicInvite();
+      } catch (_) {}
+      try {
+        await bootstrapOwnPublicSelfSession();
       } catch (_) {}
 
       if (!mounted || runId != _runId) return;

@@ -54,6 +54,31 @@ void main() {
     expect(resolveRumorPeerPubkey(ownerPubkeyHex: 'me', rumor: rumor), 'peer');
   });
 
+  test(
+    'resolveRumorPeerPubkey uses p tag for sender-copy rumors from another own device',
+    () {
+      final rumor = NostrRumor.fromJsonMap({
+        'id': 'abc',
+        'pubkey': 'my-linked-device',
+        'created_at': 1,
+        'kind': 14,
+        'content': 'hi',
+        'tags': [
+          ['p', 'peer'],
+        ],
+      });
+
+      expect(
+        resolveRumorPeerPubkey(
+          ownerPubkeyHex: 'me',
+          rumor: rumor,
+          senderPubkeyHex: 'me',
+        ),
+        'peer',
+      );
+    },
+  );
+
   test('getExpirationTimestampSeconds parses NIP-40 expiration tag', () {
     final rumor = NostrRumor.fromJsonMap({
       'id': 'abc',

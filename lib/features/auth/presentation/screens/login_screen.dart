@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nostr/nostr.dart' as nostr;
 
+import '../../../../config/providers/app_bootstrap_provider.dart';
 import '../../../../config/providers/auth_provider.dart';
 import '../../../../config/providers/chat_provider.dart';
 import '../../../../config/providers/invite_provider.dart';
@@ -100,8 +101,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     await _autoRegisterCurrentDeviceForNewIdentity();
     await _ensureSignupInviteLink();
+    await _retryBootstrap();
     if (!mounted) return;
     context.go('/chats');
+  }
+
+  Future<void> _retryBootstrap() async {
+    await ref.read(appBootstrapProvider.notifier).retry();
   }
 
   Future<void> _ensureSignupInviteLink() async {
@@ -148,6 +154,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await ref.read(authStateProvider.notifier).login(key);
       final state = ref.read(authStateProvider);
       if (!state.isAuthenticated || !mounted) return;
+      await _retryBootstrap();
+      if (!mounted) return;
       context.go('/chats');
       return;
     }
@@ -181,6 +189,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         _isProcessingNsecLogin = false;
       });
       await _showRegisterCurrentDeviceDialog(preview);
+      await _retryBootstrap();
       if (!mounted) return;
       context.go('/chats');
     } finally {

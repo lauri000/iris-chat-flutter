@@ -274,7 +274,11 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
 
           final owner = service.ownerPubkeyHex;
           final peer = owner != null
-              ? resolveRumorPeerPubkey(ownerPubkeyHex: owner, rumor: rumor)
+              ? resolveRumorPeerPubkey(
+                  ownerPubkeyHex: owner,
+                  rumor: rumor,
+                  senderPubkeyHex: message.senderPubkeyHex,
+                )
               : message.senderPubkeyHex;
           if (peer == null || peer.isEmpty) return;
 
@@ -290,7 +294,11 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
         if (rumor.kind == 15) {
           final owner = service.ownerPubkeyHex;
           final peer = owner != null
-              ? resolveRumorPeerPubkey(ownerPubkeyHex: owner, rumor: rumor)
+              ? resolveRumorPeerPubkey(
+                  ownerPubkeyHex: owner,
+                  rumor: rumor,
+                  senderPubkeyHex: message.senderPubkeyHex,
+                )
               : message.senderPubkeyHex;
           if (peer != null && peer.isNotEmpty) {
             final session = await ref

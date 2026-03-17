@@ -288,6 +288,13 @@ Future<void> _pumpUntil({
   );
 }
 
+Future<void> _waitForNextCreatedAtSecond() async {
+  final currentSecond = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  while ((DateTime.now().millisecondsSinceEpoch ~/ 1000) == currentSecond) {
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+  }
+}
+
 bool _eventHasTag(Map<String, dynamic> event, String name, String value) {
   final tags = event['tags'];
   if (tags is! List) return false;
@@ -758,6 +765,7 @@ Future<_AppInstance> _startLinkedInstance({
       timeout: const Duration(seconds: 6),
     );
 
+    await _waitForNextCreatedAtSecond();
     final accepted = await ownerContainer
         .read(inviteStateProvider.notifier)
         .acceptLinkInviteFromUrl(inviteUrl);

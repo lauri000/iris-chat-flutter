@@ -57,6 +57,7 @@ class _TestInviteNotifier extends InviteNotifier {
     int? maxUses,
     bool publishToRelays = false,
     bool defaultToSingleUse = true,
+    String? deviceIdOverride,
   }) async {
     createCalls++;
     lastLabel = label;

@@ -23,6 +23,8 @@ import 'nostr_provider.dart';
 
 part 'invite_provider.freezed.dart';
 
+const String canonicalPublicInviteDeviceId = 'public';
+
 int? effectiveInviteMaxUses({
   required int? requestedMaxUses,
   bool defaultToSingleUse = true,
@@ -50,6 +52,19 @@ class InviteNotifier extends StateNotifier<InviteState> {
   final Ref _ref;
   static const Duration _kLoadTimeout = Duration(seconds: 3);
 
+  static String? serializedInviteDeviceId(String serializedState) {
+    try {
+      final decoded = jsonDecode(serializedState);
+      if (decoded is Map<String, dynamic>) {
+        final deviceId = decoded['deviceId'];
+        if (deviceId is String && deviceId.isNotEmpty) {
+          return deviceId;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// Load all invites from storage.
   Future<void> loadInvites() async {
     if (!mounted) return;
@@ -73,6 +88,7 @@ class InviteNotifier extends StateNotifier<InviteState> {
     int? maxUses,
     bool publishToRelays = false,
     bool defaultToSingleUse = true,
+    String? deviceIdOverride,
   }) async {
     state = state.copyWith(isCreating: true, error: null);
     InviteHandle? inviteHandle;
@@ -97,10 +113,15 @@ class InviteNotifier extends StateNotifier<InviteState> {
         defaultToSingleUse: defaultToSingleUse,
       );
 
+      final inviteDeviceId =
+          deviceIdOverride != null && deviceIdOverride.trim().isNotEmpty
+          ? deviceIdOverride.trim()
+          : devicePubkeyHex;
+
       // Create invite using ndr-ffi
       inviteHandle = await NdrFfi.createInvite(
         inviterPubkeyHex: devicePubkeyHex,
-        deviceId: devicePubkeyHex,
+        deviceId: inviteDeviceId,
         maxUses: effectiveMaxUses,
       );
 
@@ -167,6 +188,8 @@ class InviteNotifier extends StateNotifier<InviteState> {
       if (invite.serializedState == null || invite.serializedState!.isEmpty) {
         continue;
       }
+      final deviceId = serializedInviteDeviceId(invite.serializedState!);
+      if (deviceId != canonicalPublicInviteDeviceId) continue;
       inviteToPublish = invite;
       break;
     }
@@ -174,6 +197,7 @@ class InviteNotifier extends StateNotifier<InviteState> {
     inviteToPublish ??= await createInvite(
       maxUses: null,
       defaultToSingleUse: false,
+      deviceIdOverride: canonicalPublicInviteDeviceId,
     );
 
     final serializedState = inviteToPublish?.serializedState;
@@ -494,6 +518,12 @@ class InviteNotifier extends StateNotifier<InviteState> {
             label: invite?.label,
             maxUses: invite?.maxUses,
             defaultToSingleUse: invite?.maxUses != null,
+            deviceIdOverride:
+                invite?.serializedState != null &&
+                    serializedInviteDeviceId(invite!.serializedState!) ==
+                        canonicalPublicInviteDeviceId
+                ? canonicalPublicInviteDeviceId
+                : null,
           );
           if (replacement?.serializedState == null) return null;
 
@@ -611,7 +641,9 @@ class InviteNotifier extends StateNotifier<InviteState> {
       final normalizedRecipientOwnerPubkey = _normalizeDevicePubkeyHex(
         recipientOwnerPubkey,
       );
-      final normalizedRemoteDeviceId = _normalizeDevicePubkeyHex(remoteDeviceId);
+      final normalizedRemoteDeviceId = _normalizeDevicePubkeyHex(
+        remoteDeviceId,
+      );
 
       // Owner-level active-session checks are only safe for owner-device responses.
       // Linked-device responses must still be imported so the native manager can

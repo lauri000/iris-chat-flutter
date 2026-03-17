@@ -9,6 +9,7 @@ import 'package:iris_chat/config/providers/invite_provider.dart';
 import 'package:iris_chat/config/providers/nostr_provider.dart';
 import 'package:iris_chat/core/ffi/ndr_ffi.dart';
 import 'package:iris_chat/core/services/logger_service.dart';
+import 'package:iris_chat/core/services/nostr_service.dart';
 import 'package:iris_chat/core/services/session_manager_service.dart';
 import 'package:iris_chat/features/auth/domain/repositories/auth_repository.dart';
 import 'package:iris_chat/features/chat/data/datasources/session_local_datasource.dart';
@@ -26,6 +27,8 @@ class MockSessionManagerService extends Mock implements SessionManagerService {}
 class MockSessionLocalDatasource extends Mock
     implements SessionLocalDatasource {}
 
+class MockNostrService extends Mock implements NostrService {}
+
 class MockRef extends Mock implements Ref {}
 
 void main() {
@@ -37,6 +40,7 @@ void main() {
   late MockAuthRepository mockAuthRepository;
   late MockSessionManagerService mockSessionManagerService;
   late MockSessionLocalDatasource mockSessionDatasource;
+  late MockNostrService mockNostrService;
   late bool previousLoggerEnabled;
 
   setUp(() {
@@ -45,6 +49,7 @@ void main() {
     mockAuthRepository = MockAuthRepository();
     mockSessionManagerService = MockSessionManagerService();
     mockSessionDatasource = MockSessionLocalDatasource();
+    mockNostrService = MockNostrService();
     notifier = InviteNotifier(mockDatasource, mockRef);
   });
 
@@ -66,6 +71,7 @@ void main() {
         createdAt: DateTime.now(),
       ),
     );
+    registerFallbackValue(<String, dynamic>{});
   });
 
   tearDownAll(() {
@@ -310,6 +316,108 @@ void main() {
               .setMockMethodCallHandler(channel, null);
         }
       });
+    });
+
+    group('ensurePublishedPublicInvite', () {
+      test(
+        'creates a canonical public-addressed invite when only legacy unlimited invites exist',
+        () async {
+          const channel = MethodChannel('to.iris.chat/ndr_ffi');
+          const ownerPubkeyHex =
+              '1111111111111111111111111111111111111111111111111111111111111111';
+          const devicePubkeyHex =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+          const devicePrivkeyHex =
+              '3333333333333333333333333333333333333333333333333333333333333333';
+          final legacyUnlimitedInvite = Invite(
+            id: 'legacy-public',
+            inviterPubkeyHex: devicePubkeyHex,
+            createdAt: DateTime(2026, 1, 1),
+            maxUses: null,
+            serializedState:
+                '{"deviceId":"$devicePubkeyHex","inviterEphemeralPublicKey":"legacy-eph"}',
+          );
+
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, (call) async {
+                switch (call.method) {
+                  case 'derivePublicKey':
+                    return devicePubkeyHex;
+                  case 'createInvite':
+                    return <String, dynamic>{'id': 'created-public-invite'};
+                  case 'inviteSetPurpose':
+                  case 'inviteSetOwnerPubkeyHex':
+                  case 'inviteDispose':
+                    return null;
+                  case 'inviteDeserialize':
+                    return <String, dynamic>{'id': 'created-public-invite'};
+                  case 'inviteSerialize':
+                    return '{"deviceId":"public","inviterEphemeralPublicKey":"new-public-eph"}';
+                  case 'inviteGetInviterPubkeyHex':
+                    return devicePubkeyHex;
+                  case 'inviteToEventJson':
+                    return '''
+{"kind":30078,"content":"","tags":[["ephemeralKey","new-public-eph"],["sharedSecret","shared"],["d","double-ratchet/invites/public"],["l","double-ratchet/invites"]]}''';
+                }
+                return null;
+              });
+
+          when(
+            () => mockDatasource.getActiveInvites(),
+          ).thenAnswer((_) async => [legacyUnlimitedInvite]);
+          when(() => mockDatasource.saveInvite(any())).thenAnswer((_) async {});
+
+          when(() => mockRef.read(authStateProvider)).thenReturn(
+            const AuthState(
+              isAuthenticated: true,
+              isInitialized: true,
+              hasOwnerKey: true,
+              pubkeyHex: ownerPubkeyHex,
+              devicePubkeyHex: devicePubkeyHex,
+            ),
+          );
+          when(
+            () => mockRef.read(authRepositoryProvider),
+          ).thenReturn(mockAuthRepository);
+          when(
+            () => mockAuthRepository.getPrivateKey(),
+          ).thenAnswer((_) async => devicePrivkeyHex);
+          when(
+            () => mockRef.read(nostrServiceProvider),
+          ).thenReturn(mockNostrService);
+          when(
+            () => mockNostrService.closeSubscription(any()),
+          ).thenReturn(null);
+          when(
+            () => mockNostrService.subscribeWithIdRaw(any(), any()),
+          ).thenAnswer(
+            (invocation) => invocation.positionalArguments[0] as String,
+          );
+          when(
+            () => mockNostrService.publishEvent(any()),
+          ).thenAnswer((_) async {});
+
+          try {
+            await notifier.ensurePublishedPublicInvite();
+          } finally {
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+                .setMockMethodCallHandler(channel, null);
+          }
+
+          final savedInvite =
+              verify(
+                    () => mockDatasource.saveInvite(captureAny()),
+                  ).captured.single
+                  as Invite;
+          expect(
+            InviteNotifier.serializedInviteDeviceId(
+              savedInvite.serializedState!,
+            ),
+            canonicalPublicInviteDeviceId,
+          );
+          verify(() => mockNostrService.publishEvent(any())).called(1);
+        },
+      );
     });
 
     group('buildMergedDeviceMap', () {

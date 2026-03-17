@@ -120,8 +120,14 @@ DateTime rumorTimestamp(NostrRumor rumor) {
 String? resolveRumorPeerPubkey({
   required String ownerPubkeyHex,
   required NostrRumor rumor,
+  String? senderPubkeyHex,
 }) {
-  if (rumor.pubkey == ownerPubkeyHex) {
+  final normalizedOwner = ownerPubkeyHex.trim().toLowerCase();
+  final normalizedRumorPubkey = rumor.pubkey.trim().toLowerCase();
+  final normalizedSenderPubkey = senderPubkeyHex?.trim().toLowerCase();
+
+  if (normalizedRumorPubkey == normalizedOwner ||
+      normalizedSenderPubkey == normalizedOwner) {
     return getFirstTagValue(rumor.tags, 'p');
   }
   return rumor.pubkey;

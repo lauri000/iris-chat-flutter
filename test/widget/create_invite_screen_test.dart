@@ -26,6 +26,7 @@ class TestInviteNotifier extends InviteNotifier {
     int? maxUses,
     bool publishToRelays = false,
     bool defaultToSingleUse = true,
+    String? deviceIdOverride,
   }) async {
     // Avoid calling NdrFfi in widget tests; CreateInviteScreen should still
     // behave as if an invite was created successfully.
