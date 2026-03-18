@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../ffi/ndr_ffi.dart';
-import '../ffi/models/models.dart';
 import '../services/nostr_service.dart';
 
 const _appKeysEventKind = 30078;
