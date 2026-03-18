@@ -14,9 +14,12 @@ import 'package:iris_chat/core/services/profile_service.dart';
 import 'package:iris_chat/core/services/session_manager_service.dart';
 import 'package:iris_chat/features/chat/data/datasources/group_local_datasource.dart';
 import 'package:iris_chat/features/chat/data/datasources/group_message_local_datasource.dart';
+import 'package:iris_chat/features/chat/data/datasources/message_local_datasource.dart';
 import 'package:iris_chat/features/chat/data/datasources/session_local_datasource.dart';
+import 'package:iris_chat/features/chat/domain/models/message.dart';
 import 'package:iris_chat/features/chat/domain/models/session.dart';
 import 'package:iris_chat/features/chat/presentation/screens/chat_list_screen.dart';
+import 'package:iris_chat/features/chat/presentation/screens/chat_screen.dart';
 import 'package:iris_chat/features/chat/presentation/widgets/unseen_badge.dart';
 import 'package:iris_chat/features/invite/data/datasources/invite_local_datasource.dart';
 import 'package:iris_chat/shared/utils/animal_names.dart';
@@ -37,6 +40,9 @@ class MockGroupLocalDatasource extends Mock implements GroupLocalDatasource {}
 
 class MockGroupMessageLocalDatasource extends Mock
     implements GroupMessageLocalDatasource {}
+
+class MockMessageLocalDatasource extends Mock
+    implements MessageLocalDatasource {}
 
 class FakeImgproxySettingsService implements ImgproxySettingsService {
   const FakeImgproxySettingsService();
@@ -76,6 +82,7 @@ void main() {
   late MockProfileService mockProfileService;
   late MockGroupLocalDatasource mockGroupDatasource;
   late MockGroupMessageLocalDatasource mockGroupMessageDatasource;
+  late MockMessageLocalDatasource mockMessageDatasource;
   const fakeImgproxySettingsService = FakeImgproxySettingsService();
 
   setUp(() {
@@ -85,6 +92,7 @@ void main() {
     mockProfileService = MockProfileService();
     mockGroupDatasource = MockGroupLocalDatasource();
     mockGroupMessageDatasource = MockGroupMessageLocalDatasource();
+    mockMessageDatasource = MockMessageLocalDatasource();
 
     when(
       () => mockProfileService.fetchProfiles(any()),
@@ -97,6 +105,25 @@ void main() {
       () => mockProfileService.profileUpdates,
     ).thenAnswer((_) => const Stream<String>.empty());
     when(() => mockGroupDatasource.getAllGroups()).thenAnswer((_) async => []);
+    when(
+      () => mockSessionManagerService.sendReceipt(
+        recipientPubkeyHex: any(named: 'recipientPubkeyHex'),
+        receiptType: any(named: 'receiptType'),
+        messageIds: any(named: 'messageIds'),
+      ),
+    ).thenAnswer((_) async {});
+    when(
+      () => mockSessionManagerService.sendTyping(
+        recipientPubkeyHex: any(named: 'recipientPubkeyHex'),
+        expiresAtSeconds: any(named: 'expiresAtSeconds'),
+      ),
+    ).thenAnswer((_) async {});
+    when(
+      () => mockSessionDatasource.updateMetadata(
+        any(),
+        unreadCount: any(named: 'unreadCount'),
+      ),
+    ).thenAnswer((_) async {});
   });
 
   setUpAll(() {
@@ -112,11 +139,14 @@ void main() {
 
   Widget buildChatListScreen({
     List<ChatSession> sessions = const [],
+    Map<String, List<ChatMessage>>? messagesBySession,
     Map<String, bool>? relayConnectionStatus,
     ConnectivityStatus connectivityStatus = ConnectivityStatus.online,
     bool throwOnMessageSubscriptionInit = false,
     int failSessionLoadsBeforeSuccess = 0,
     int failGroupLoadsBeforeSuccess = 0,
+    bool includeChatRoute = false,
+    bool seedSessionState = false,
   }) {
     var sessionLoadAttempts = 0;
     when(() => mockSessionDatasource.getAllSessions()).thenAnswer((_) async {
@@ -125,6 +155,15 @@ void main() {
         throw Exception('database is locked');
       }
       return sessions;
+    });
+    when(() => mockSessionDatasource.getSession(any())).thenAnswer((
+      invocation,
+    ) async {
+      final requestedSessionId = invocation.positionalArguments.first as String;
+      for (final session in sessions) {
+        if (session.id == requestedSessionId) return session;
+      }
+      return null;
     });
     var groupLoadAttempts = 0;
     when(() => mockGroupDatasource.getAllGroups()).thenAnswer((_) async {
@@ -140,6 +179,16 @@ void main() {
     when(
       () => mockInviteDatasource.getActiveInvites(),
     ).thenAnswer((_) async => []);
+    when(
+      () => mockMessageDatasource.getMessagesForSession(
+        any(),
+        limit: any(named: 'limit'),
+        beforeId: any(named: 'beforeId'),
+      ),
+    ).thenAnswer((invocation) async {
+      final requestedSessionId = invocation.positionalArguments.first as String;
+      return messagesBySession?[requestedSessionId] ?? const <ChatMessage>[];
+    });
 
     final router = GoRouter(
       initialLocation: '/chats',
@@ -153,6 +202,12 @@ void main() {
               builder: (context, state) =>
                   const Scaffold(body: Text('New Chat')),
             ),
+            if (includeChatRoute)
+              GoRoute(
+                path: ':id',
+                builder: (context, state) =>
+                    ChatScreen(sessionId: state.pathParameters['id']!),
+              ),
           ],
         ),
         GoRoute(
@@ -181,10 +236,21 @@ void main() {
         groupMessageDatasourceProvider.overrideWithValue(
           mockGroupMessageDatasource,
         ),
+        messageDatasourceProvider.overrideWithValue(mockMessageDatasource),
         profileServiceProvider.overrideWithValue(mockProfileService),
         imgproxySettingsServiceProvider.overrideWithValue(
           fakeImgproxySettingsService,
         ),
+        if (seedSessionState)
+          sessionStateProvider.overrideWith((ref) {
+            final notifier = SessionNotifier(
+              mockSessionDatasource,
+              mockProfileService,
+              mockSessionManagerService,
+            );
+            notifier.state = SessionState(sessions: sessions, isLoading: false);
+            return notifier;
+          }),
         connectivityStatusProvider.overrideWith(
           (_) => Stream.value(connectivityStatus),
         ),
@@ -549,6 +615,68 @@ void main() {
 
         expect(find.byType(Dismissible), findsOneWidget);
       });
+
+      testWidgets(
+        'unread badge clears after opening a chat even when messages are already seen',
+        (tester) async {
+          final session = ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex:
+                'abcd1234567890abcd1234567890abcdabcd1234567890abcd1234567890',
+            recipientName: 'Alice',
+            createdAt: DateTime.now(),
+            unreadCount: 3,
+          );
+          final seenMessage = ChatMessage(
+            id: 'msg-1',
+            sessionId: session.id,
+            text: 'Already seen',
+            timestamp: DateTime.now(),
+            direction: MessageDirection.incoming,
+            status: MessageStatus.seen,
+            rumorId: 'rumor-1',
+          );
+
+          await tester.pumpWidget(
+            buildChatListScreen(
+              sessions: [session],
+              messagesBySession: {
+                session.id: [seenMessage],
+              },
+              includeChatRoute: true,
+              seedSessionState: true,
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          expect(find.text('3'), findsOneWidget);
+
+          await tester.tap(find.text('Alice'));
+          await tester.pumpAndSettle();
+
+          expect(find.byType(ChatScreen), findsOneWidget);
+
+          await tester.pageBack();
+          await tester.pumpAndSettle();
+
+          expect(find.byType(ChatListScreen), findsOneWidget);
+          expect(find.byType(UnseenBadge), findsNothing);
+          expect(find.text('3'), findsNothing);
+          verify(
+            () => mockSessionDatasource.updateMetadata(
+              session.id,
+              unreadCount: 0,
+            ),
+          ).called(1);
+          verifyNever(
+            () => mockSessionManagerService.sendReceipt(
+              recipientPubkeyHex: any(named: 'recipientPubkeyHex'),
+              receiptType: 'seen',
+              messageIds: any(named: 'messageIds'),
+            ),
+          );
+        },
+      );
     });
   });
 }

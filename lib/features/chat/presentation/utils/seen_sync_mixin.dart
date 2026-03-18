@@ -24,6 +24,9 @@ mixin SeenSyncMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
 
   bool get hasUnseenIncomingMessages;
 
+  @protected
+  bool get hasUnreadIndicator => hasUnseenIncomingMessages;
+
   Future<void> markConversationSeen();
 
   Future<void> afterConversationSeen() async {}
@@ -52,7 +55,7 @@ mixin SeenSyncMixin<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   @protected
   void scheduleSeenSync() {
     if (!mounted) return;
-    if (_seenSyncInFlight || !isAppResumed || !hasUnseenIncomingMessages) {
+    if (_seenSyncInFlight || !isAppResumed || !hasUnreadIndicator) {
       return;
     }
 

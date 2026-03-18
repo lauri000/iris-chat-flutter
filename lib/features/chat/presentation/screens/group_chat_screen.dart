@@ -79,6 +79,17 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen>
   }
 
   @override
+  bool get hasUnreadIndicator {
+    final groups = ref.read(groupStateProvider).groups;
+    for (final group in groups) {
+      if (group.id == widget.groupId) {
+        return group.unreadCount > 0 || hasUnseenIncomingMessages;
+      }
+    }
+    return hasUnseenIncomingMessages;
+  }
+
+  @override
   Future<void> markConversationSeen() {
     return ref.read(groupStateProvider.notifier).markGroupSeen(widget.groupId);
   }

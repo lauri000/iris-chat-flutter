@@ -98,6 +98,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   @override
+  bool get hasUnreadIndicator {
+    final sessions = ref.read(sessionStateProvider).sessions;
+    for (final session in sessions) {
+      if (session.id == widget.sessionId) {
+        return session.unreadCount > 0 || hasUnseenIncomingMessages;
+      }
+    }
+    return hasUnseenIncomingMessages;
+  }
+
+  @override
   Future<void> markConversationSeen() {
     return ref
         .read(chatStateProvider.notifier)
