@@ -632,6 +632,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final owner = ownerPubkeyHex?.toLowerCase().trim();
     final sender = senderPubkeyHex.toLowerCase().trim();
     if (sender.isEmpty) return null;
+    final rumorAuthor = rumor.pubkey.toLowerCase().trim();
+    final pTagPubkey = getFirstTagValue(rumor.tags, 'p')?.toLowerCase().trim();
+
+    final isSelfTargetedRumor =
+        owner != null &&
+        owner.isNotEmpty &&
+        (rumorAuthor == owner || sender == owner) &&
+        (pTagPubkey == null || pTagPubkey.isEmpty || pTagPubkey == owner);
 
     final candidates = owner == null
         ? <String>[sender]
@@ -641,6 +649,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
             rumorTags: rumor.tags,
             senderPubkeyHex: sender,
           );
+
+    // Self-targeted rumors should stay in the owner/self conversation even if
+    // there happens to be a direct session stored for one of our own devices.
+    if (isSelfTargetedRumor) {
+      return owner;
+    }
 
     for (final candidate in candidates) {
       if (!mounted) return null;

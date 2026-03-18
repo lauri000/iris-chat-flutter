@@ -1205,7 +1205,7 @@ void main() {
       );
 
       test(
-        'prefers an existing direct sender-device session for self-targeted rumors',
+        'keeps self-targeted rumors on the owner session even if a sender-device session exists',
         () async {
           const ownerPubkey =
               '1111111111111111111111111111111111111111111111111111111111111111';
@@ -1228,6 +1228,12 @@ void main() {
                 mockSessionDatasource.getSessionByRecipient(senderDevicePubkey),
           ).thenAnswer((_) async => directSession);
           when(
+            () => mockSessionDatasource.getSessionByRecipient(ownerPubkey),
+          ).thenAnswer((_) async => null);
+          when(
+            () => mockSessionDatasource.saveSession(any()),
+          ).thenAnswer((_) async {});
+          when(
             () => mockMessageDatasource.saveMessage(any()),
           ).thenAnswer((_) async {});
 
@@ -1240,17 +1246,17 @@ void main() {
           );
 
           expect(received, isNotNull);
-          expect(received!.sessionId, directSession.id);
+          expect(received!.sessionId, ownerPubkey);
           expect(received.isOutgoing, isTrue);
-          expect(notifier.state.messages[directSession.id], isNotNull);
+          expect(notifier.state.messages[ownerPubkey], isNotNull);
           expect(
-            notifier.state.messages[directSession.id]!.single.text,
+            notifier.state.messages[ownerPubkey]!.single.text,
             'hello from my other device',
           );
           verify(
-            () => mockSessionManagerService.setupUser(senderDevicePubkey),
+            () => mockSessionManagerService.setupUser(ownerPubkey),
           ).called(1);
-          verifyNever(() => mockSessionDatasource.saveSession(any()));
+          verify(() => mockSessionDatasource.saveSession(any())).called(1);
           verify(() => mockMessageDatasource.saveMessage(any())).called(1);
         },
       );
@@ -1309,7 +1315,7 @@ void main() {
       );
 
       test(
-        'prefers existing rumor-author device session when sender normalizes to owner',
+        'keeps linked-own-device self-targeted rumors on the owner session even if a device session exists',
         () async {
           const ownerPubkey =
               '1111111111111111111111111111111111111111111111111111111111111111';
@@ -1333,6 +1339,12 @@ void main() {
             ),
           ).thenAnswer((_) async => directSession);
           when(
+            () => mockSessionDatasource.getSessionByRecipient(ownerPubkey),
+          ).thenAnswer((_) async => null);
+          when(
+            () => mockSessionDatasource.saveSession(any()),
+          ).thenAnswer((_) async {});
+          when(
             () => mockMessageDatasource.saveMessage(any()),
           ).thenAnswer((_) async {});
 
@@ -1345,17 +1357,17 @@ void main() {
           );
 
           expect(received, isNotNull);
-          expect(received!.sessionId, directSession.id);
+          expect(received!.sessionId, ownerPubkey);
           expect(received.isOutgoing, isTrue);
-          expect(notifier.state.messages[directSession.id], isNotNull);
+          expect(notifier.state.messages[ownerPubkey], isNotNull);
           expect(
-            notifier.state.messages[directSession.id]!.single.text,
+            notifier.state.messages[ownerPubkey]!.single.text,
             'hello from my linked device on direct session',
           );
           verify(
-            () => mockSessionManagerService.setupUser(linkedOwnDevicePubkey),
+            () => mockSessionManagerService.setupUser(ownerPubkey),
           ).called(1);
-          verifyNever(() => mockSessionDatasource.saveSession(any()));
+          verify(() => mockSessionDatasource.saveSession(any())).called(1);
           verify(() => mockMessageDatasource.saveMessage(any())).called(1);
         },
       );
