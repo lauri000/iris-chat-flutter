@@ -174,6 +174,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final preview = await registrationService.buildPreviewFromPrivateKeyNsec(
         nsecCandidate,
       );
+      if (!mounted) return;
+
+      setState(() {
+        _isProcessingNsecLogin = false;
+      });
+      await _showRegisterCurrentDeviceDialog(preview);
+      if (!mounted) return;
+
+      setState(() {
+        _isProcessingNsecLogin = true;
+      });
 
       await ref
           .read(authStateProvider.notifier)
@@ -188,7 +199,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       setState(() {
         _isProcessingNsecLogin = false;
       });
-      await _showRegisterCurrentDeviceDialog(preview);
       await _retryBootstrap();
       if (!mounted) return;
       context.go('/chats');

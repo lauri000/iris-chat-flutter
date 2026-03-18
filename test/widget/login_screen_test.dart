@@ -17,6 +17,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:nostr/nostr.dart' as nostr;
 
 import '../test_helpers.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class MockAuthRepository extends Mock implements AuthRepository {}
 
@@ -51,6 +52,12 @@ class _TestBootstrapNotifier extends AppBootstrapNotifier {
   Future<void> retry() async {
     retryCalls += 1;
     state = const AppBootstrapState(isLoading: false, isReady: true);
+  }
+}
+
+class _TestAuthNotifier extends AuthNotifier {
+  _TestAuthNotifier(super.repository, AuthState initialState) {
+    state = initialState;
   }
 }
 
@@ -184,24 +191,14 @@ void main() {
   }) {
     final bootstrapNotifier = _TestBootstrapNotifier();
     onBootstrapNotifierCreated?.call(bootstrapNotifier);
-    final router = GoRouter(
-      initialLocation: '/login',
-      routes: [
-        GoRoute(
-          path: '/login',
-          builder: (context, state) => const LoginScreen(),
-        ),
-        GoRoute(
-          path: '/chats',
-          builder: (context, state) =>
-              const Scaffold(body: Text('Chats Screen')),
-        ),
-      ],
+    final authNotifier = _TestAuthNotifier(
+      mockAuthRepo,
+      const AuthState(isInitialized: true),
     );
 
-    return createTestRouterApp(
-      router,
+    return ProviderScope(
       overrides: [
+        authStateProvider.overrideWith((ref) => authNotifier),
         authRepositoryProvider.overrideWithValue(mockAuthRepo),
         databaseServiceProvider.overrideWithValue(mockDatabaseService),
         inviteDatasourceProvider.overrideWithValue(mockInviteDatasource),
@@ -215,6 +212,69 @@ void main() {
         ),
         appBootstrapProvider.overrideWith((ref) => bootstrapNotifier),
       ],
+      child: Consumer(
+        builder: (context, ref, _) {
+          final authState = ref.watch(authStateProvider);
+          final bootstrapState = ref.watch(appBootstrapProvider);
+
+          final router = GoRouter(
+            initialLocation: '/login',
+            redirect: (context, state) {
+              final isAuthenticated = authState.isAuthenticated;
+              final isAuthRoute = state.matchedLocation == '/login';
+              final isBootstrapRoute = state.matchedLocation == '/bootstrap';
+
+              if (!isAuthenticated && !isAuthRoute) {
+                return '/login';
+              }
+              if (!isAuthenticated && isBootstrapRoute) {
+                return '/login';
+              }
+              if (isAuthenticated && isAuthRoute) {
+                return bootstrapState.isReady ? '/chats' : '/bootstrap';
+              }
+              if (isAuthenticated &&
+                  !bootstrapState.isReady &&
+                  !isBootstrapRoute) {
+                return '/bootstrap';
+              }
+              if (isAuthenticated &&
+                  bootstrapState.isReady &&
+                  isBootstrapRoute) {
+                return '/chats';
+              }
+              return null;
+            },
+            routes: [
+              GoRoute(
+                path: '/login',
+                builder: (context, state) => const LoginScreen(),
+              ),
+              GoRoute(
+                path: '/bootstrap',
+                builder: (context, state) =>
+                    const Scaffold(body: Text('Bootstrap Screen')),
+              ),
+              GoRoute(
+                path: '/chats',
+                builder: (context, state) =>
+                    const Scaffold(body: Text('Chats Screen')),
+              ),
+            ],
+          );
+
+          return ScreenUtilInit(
+            designSize: const Size(390, 844),
+            minTextAdapt: true,
+            builder: (context, _) {
+              return MaterialApp.router(
+                theme: createTestTheme(),
+                routerConfig: router,
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -529,12 +589,12 @@ void main() {
           () => mockLoginDeviceRegistrationService
               .buildPreviewFromPrivateKeyNsec(nsec),
         ).called(1);
-        verify(
+        verifyNever(
           () => mockAuthRepo.login(
             nsec,
-            devicePrivkeyHex: generatedDevicePrivkeyHex,
+            devicePrivkeyHex: any(named: 'devicePrivkeyHex'),
           ),
-        ).called(1);
+        );
       });
 
       testWidgets('registering from prompt publishes generated device key', (
@@ -611,12 +671,12 @@ void main() {
 
           expect(find.text('Register This Device?'), findsWidgets);
           expect(find.text('Chats Screen'), findsNothing);
-          verify(
+          verifyNever(
             () => mockAuthRepo.login(
               nsec,
-              devicePrivkeyHex: generatedDevicePrivkeyHex,
+              devicePrivkeyHex: any(named: 'devicePrivkeyHex'),
             ),
-          ).called(1);
+          );
         },
       );
 
