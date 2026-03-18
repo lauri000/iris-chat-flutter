@@ -65,6 +65,7 @@ migrate_working_dir/
 *.so
 *.dylib
 *.a
+!ios/Frameworks/**/*.a
 
 # Secrets
 *.env

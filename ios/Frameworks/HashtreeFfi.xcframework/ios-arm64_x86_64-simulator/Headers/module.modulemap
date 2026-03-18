@@ -1,0 +1,4 @@
+module hashtree_ffiFFI {
+    header "hashtree_ffiFFI.h"
+    export *
+}
