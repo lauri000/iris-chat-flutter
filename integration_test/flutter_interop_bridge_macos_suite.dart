@@ -158,7 +158,9 @@ Future<void> _runAppBootstrap(ProviderContainer container) async {
     bootstrapTargets,
   );
   container.read(messageSubscriptionProvider);
-  await container.read(inviteStateProvider.notifier).ensurePublishedPublicInvite();
+  await container
+      .read(inviteStateProvider.notifier)
+      .ensurePublishedPublicInvite();
   await container
       .read(sessionManagerServiceProvider)
       .bootstrapOwnerSelfSessionIfNeeded();
@@ -178,6 +180,33 @@ Future<void> _emitEvent(File eventsFile, Map<String, dynamic> event) async {
   await eventsFile.writeAsString('$line\n', mode: FileMode.append, flush: true);
   // Keep a mirrored stdout breadcrumb for easier local debugging.
   stdout.writeln('IRIS_FLUTTER_INTEROP_EVENT $line');
+}
+
+Future<String?> _readPersistedInteropDevicePrivkey(File stateFile) async {
+  if (!stateFile.existsSync()) return null;
+  try {
+    final decoded = jsonDecode(await stateFile.readAsString());
+    if (decoded is! Map<String, dynamic>) return null;
+    final value = decoded['devicePrivkeyHex'];
+    if (value is! String) return null;
+    final normalized = value.trim().toLowerCase();
+    if (normalized.length != 64) return null;
+    return normalized;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> _writePersistedInteropDevicePrivkey(
+  File stateFile,
+  String devicePrivkeyHex,
+) async {
+  final normalized = devicePrivkeyHex.trim().toLowerCase();
+  if (normalized.length != 64) return;
+  await stateFile.writeAsString(
+    jsonEncode({'devicePrivkeyHex': normalized}),
+    flush: true,
+  );
 }
 
 class _PendingLinkInvite {
@@ -1346,6 +1375,9 @@ void main() {
     final rootDir = hasDataDirOverride
         ? await Directory(dataDirPath).create(recursive: true)
         : await Directory.systemTemp.createTemp('iris-chat-interop-');
+    final interopLoginStateFile = File(
+      '${rootDir.path}/interop_login_state.json',
+    );
     final secureStorage = _createInMemorySecureStorage();
 
     final container = _makeContainer(
@@ -1360,24 +1392,39 @@ void main() {
 
       if (privateKeyNsec.trim().isNotEmpty) {
         if (registerDeviceOnLogin) {
-          final registrationService = container.read(
-            loginDeviceRegistrationServiceProvider,
-          );
-          final preview = await registrationService
-              .buildPreviewFromPrivateKeyNsec(privateKeyNsec);
+          final persistedDevicePrivkeyHex =
+              await _readPersistedInteropDevicePrivkey(interopLoginStateFile);
+          if (persistedDevicePrivkeyHex != null) {
+            await container
+                .read(authStateProvider.notifier)
+                .login(
+                  privateKeyNsec,
+                  devicePrivkeyHex: persistedDevicePrivkeyHex,
+                );
+          } else {
+            final registrationService = container.read(
+              loginDeviceRegistrationServiceProvider,
+            );
+            final preview = await registrationService
+                .buildPreviewFromPrivateKeyNsec(privateKeyNsec);
 
-          await container
-              .read(authStateProvider.notifier)
-              .login(
-                privateKeyNsec,
-                devicePrivkeyHex: preview.currentDevicePrivkeyHex,
-              );
+            await container
+                .read(authStateProvider.notifier)
+                .login(
+                  privateKeyNsec,
+                  devicePrivkeyHex: preview.currentDevicePrivkeyHex,
+                );
 
-          await registrationService.publishDeviceList(
-            ownerPubkeyHex: preview.ownerPubkeyHex,
-            ownerPrivkeyHex: preview.ownerPrivkeyHex,
-            devices: preview.devicesIfRegistered,
-          );
+            await registrationService.publishDeviceList(
+              ownerPubkeyHex: preview.ownerPubkeyHex,
+              ownerPrivkeyHex: preview.ownerPrivkeyHex,
+              devices: preview.devicesIfRegistered,
+            );
+            await _writePersistedInteropDevicePrivkey(
+              interopLoginStateFile,
+              preview.currentDevicePrivkeyHex,
+            );
+          }
         } else {
           await container
               .read(authStateProvider.notifier)
