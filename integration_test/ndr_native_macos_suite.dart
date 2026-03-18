@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -11,6 +12,9 @@ class _PumpLog {
   final List<PubSubEvent> a = <PubSubEvent>[];
   final List<PubSubEvent> b = <PubSubEvent>[];
 }
+
+const _spuriousMacOsKeyUpAssertion =
+    'A KeyUpEvent is dispatched, but the state shows that the physical key is not pressed';
 
 bool _isPublish(PubSubEvent e) =>
     (e.kind == 'publish' || e.kind == 'publish_signed') && e.eventJson != null;
@@ -161,8 +165,24 @@ Future<void> _drainAllEvents(SessionManagerHandle mgr) async {
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  HardwareKeyboard.instance.clearState();
+  final previousOnError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    final exceptionText = details.exceptionAsString();
+    if (exceptionText.contains(_spuriousMacOsKeyUpAssertion)) {
+      // macOS integration runs can emit stray key-up events when the test app
+      // is foregrounded. Ignore that harness-specific assertion in this suite
+      // so native FFI checks are gated by protocol failures, not OS focus noise.
+      return;
+    }
+    previousOnError?.call(details);
+  };
 
   group('ndr-ffi native (macOS)', () {
+    setUp(() {
+      HardwareKeyboard.instance.clearState();
+    });
+
     testWidgets('smoke: version + keypair', (tester) async {
       await tester.pumpWidget(const SizedBox.shrink());
 
