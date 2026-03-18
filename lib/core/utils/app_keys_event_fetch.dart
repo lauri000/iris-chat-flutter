@@ -7,6 +7,11 @@ import '../services/nostr_service.dart';
 const _appKeysEventKind = 30078;
 const _appKeysDTagValue = 'double-ratchet/app-keys';
 
+bool isAppKeysEvent(NostrEvent event) {
+  return event.kind == _appKeysEventKind &&
+      event.getTagValue('d') == _appKeysDTagValue;
+}
+
 Future<List<NostrEvent>> fetchAppKeysEvents(
   NostrService nostrService, {
   required String ownerPubkeyHex,
@@ -47,9 +52,8 @@ Future<List<NostrEvent>> fetchAppKeysEvents(
 
   sub = nostrService.events.listen((event) {
     if (event.subscriptionId != subid) return;
-    if (event.kind != _appKeysEventKind) return;
+    if (!isAppKeysEvent(event)) return;
     if (event.pubkey.trim().toLowerCase() != normalizedOwnerPubkeyHex) return;
-    if (event.getTagValue('d') != _appKeysDTagValue) return;
     if (!seenEventIds.add(event.id)) return;
 
     events.add(event);

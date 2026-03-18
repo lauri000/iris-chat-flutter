@@ -380,11 +380,14 @@ class SessionManagerService {
       <Map<String, dynamic>>[];
   final List<Map<String, dynamic>> _debugRecentDecryptedEvents =
       <Map<String, dynamic>>[];
+  final List<Map<String, dynamic>> _debugRecentBootstrapInviteDecisions =
+      <Map<String, dynamic>>[];
   Map<String, dynamic>? _debugLastOwnerSelfSessionBootstrap;
   final Map<String, String> _recentLinkedDeviceSenderByPeerOwner =
       <String, String>{};
   final Map<String, String> _preInitUserRecordJsonByOwner = <String, String>{};
   final Map<String, int> _processedMessageEventIds = <String, int>{};
+  final Map<String, Timer> _relayBackfillTimersByOwner = <String, Timer>{};
   static const String _groupOuterSubId = 'ndr-group-outer';
   static const String _processedMessageEventIdsFileName =
       'processed_message_event_ids.json';
@@ -405,8 +408,13 @@ class SessionManagerService {
       'recentLinkedDeviceSenderByPeerOwner': Map<String, String>.from(
         _recentLinkedDeviceSenderByPeerOwner,
       ),
+      'pendingRelayBackfillOwners': _relayBackfillTimersByOwner.keys.toList()
+        ..sort(),
       'recentRelayEvents': List<Map<String, dynamic>>.from(
         _debugRecentRelayEvents,
+      ),
+      'recentBootstrapInviteDecisions': List<Map<String, dynamic>>.from(
+        _debugRecentBootstrapInviteDecisions,
       ),
       'recentDecryptedEvents': List<Map<String, dynamic>>.from(
         _debugRecentDecryptedEvents,
@@ -454,6 +462,10 @@ class SessionManagerService {
     _eventSubscription = null;
     _nostrService.closeSubscription(_groupOuterSubId);
     _groupOuterSenderEventPubkeys = const [];
+    for (final timer in _relayBackfillTimersByOwner.values) {
+      timer.cancel();
+    }
+    _relayBackfillTimersByOwner.clear();
     _drainTimer?.cancel();
     _drainTimer = null;
     try {
@@ -517,7 +529,7 @@ class SessionManagerService {
     if (orderedOwners.isEmpty) return;
 
     final appKeysEvents = <NostrEvent>[];
-    final inviteEvents = <NostrEvent>[];
+    final inviteEvents = <MapEntry<String, NostrEvent>>[];
     final seenEventIds = <String>{};
 
     for (final ownerPubkeyHex in orderedOwners) {
@@ -554,7 +566,7 @@ class SessionManagerService {
       );
       for (final inviteEvent in latestInvites) {
         if (seenEventIds.add(inviteEvent.id)) {
-          inviteEvents.add(inviteEvent);
+          inviteEvents.add(MapEntry(ownerPubkeyHex, inviteEvent));
         }
       }
     }
@@ -570,8 +582,41 @@ class SessionManagerService {
       for (final event in appKeysEvents) {
         await manager.processEvent(jsonEncode(event.toJson()));
       }
-      for (final event in inviteEvents) {
-        await manager.processEvent(jsonEncode(event.toJson()));
+      for (final inviteEntry in inviteEvents) {
+        try {
+          final acceptResult = await manager.acceptInviteFromEventJson(
+            eventJson: jsonEncode(inviteEntry.value.toJson()),
+            ownerPubkeyHintHex: inviteEntry.key,
+          );
+          _pushDebugEntry(_debugRecentBootstrapInviteDecisions, {
+            'ownerPubkeyHex': inviteEntry.key,
+            'inviteEventId': inviteEntry.value.id,
+            'inviteAuthorPubkeyHex': inviteEntry.value.pubkey,
+            'decision': 'accept_invite_from_event_json',
+            'createdNewSession': acceptResult.createdNewSession,
+            'resolvedOwnerPubkeyHex': acceptResult.ownerPubkeyHex,
+            'inviterDevicePubkeyHex': acceptResult.inviterDevicePubkeyHex,
+            'deviceId': acceptResult.deviceId,
+          });
+        } catch (_) {
+          try {
+            await manager.processEvent(jsonEncode(inviteEntry.value.toJson()));
+            _pushDebugEntry(_debugRecentBootstrapInviteDecisions, {
+              'ownerPubkeyHex': inviteEntry.key,
+              'inviteEventId': inviteEntry.value.id,
+              'inviteAuthorPubkeyHex': inviteEntry.value.pubkey,
+              'decision': 'process_event_fallback',
+            });
+          } catch (error) {
+            _pushDebugEntry(_debugRecentBootstrapInviteDecisions, {
+              'ownerPubkeyHex': inviteEntry.key,
+              'inviteEventId': inviteEntry.value.id,
+              'inviteAuthorPubkeyHex': inviteEntry.value.pubkey,
+              'decision': 'error',
+              'error': error.toString(),
+            });
+          }
+        }
       }
       await _drainEventsUnlocked();
     });
@@ -1268,6 +1313,9 @@ class SessionManagerService {
       } catch (_) {}
     }
     await _drainEventsUnlocked();
+    if (_shouldScheduleOwnerRelayBackfill(event)) {
+      _scheduleOwnerRelayBackfill(event.pubkey);
+    }
   }
 
   String _resolveGroupSenderPubkeyHex(GroupDecryptedResult decrypted) {
@@ -1324,6 +1372,49 @@ class SessionManagerService {
       if (a[i] != b[i]) return false;
     }
     return true;
+  }
+
+  bool _shouldScheduleOwnerRelayBackfill(NostrEvent event) {
+    if (!isAppKeysEvent(event)) return false;
+
+    final ownerPubkeyHex = event.pubkey.trim().toLowerCase();
+    if (ownerPubkeyHex.isEmpty) return false;
+
+    final subscriptionId = event.subscriptionId?.trim().toLowerCase() ?? '';
+    if (subscriptionId.startsWith('appkeys-fetch-') ||
+        subscriptionId.startsWith('appkeys-bootstrap-')) {
+      return false;
+    }
+
+    return true;
+  }
+
+  void _scheduleOwnerRelayBackfill(String ownerPubkeyHex) {
+    final normalizedOwnerPubkeyHex = ownerPubkeyHex.trim().toLowerCase();
+    if (normalizedOwnerPubkeyHex.isEmpty || _isDisposed) return;
+
+    _relayBackfillTimersByOwner.remove(normalizedOwnerPubkeyHex)?.cancel();
+    _relayBackfillTimersByOwner[normalizedOwnerPubkeyHex] = Timer(
+      const Duration(milliseconds: 300),
+      () {
+        _relayBackfillTimersByOwner.remove(normalizedOwnerPubkeyHex);
+        unawaited(_runOwnerRelayBackfill(normalizedOwnerPubkeyHex));
+      },
+    );
+  }
+
+  Future<void> _runOwnerRelayBackfill(String ownerPubkeyHex) async {
+    if (_isDisposed) return;
+
+    try {
+      await setupUser(ownerPubkeyHex);
+      await bootstrapUsersFromRelay([ownerPubkeyHex]);
+      await refreshSubscription();
+
+      if (_ownerPubkeyHex?.trim().toLowerCase() == ownerPubkeyHex) {
+        await bootstrapOwnerSelfSessionIfNeeded();
+      }
+    } catch (_) {}
   }
 
   Future<void> _drainEventsUnlocked() async {
