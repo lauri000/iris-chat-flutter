@@ -323,7 +323,7 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.byType(TextField), findsOneWidget);
-        expect(find.text('Private Key (nsec)'), findsOneWidget);
+        expect(find.text('Secret Key'), findsOneWidget);
         expect(find.text('Login'), findsOneWidget);
       });
 

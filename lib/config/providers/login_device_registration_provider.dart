@@ -9,8 +9,7 @@ import '../../core/utils/app_keys_event_fetch.dart';
 import '../../features/auth/domain/models/identity.dart';
 import 'nostr_provider.dart';
 
-const _invalidLoginPrivateKeyMessage =
-    'Invalid private key format. Expected nsec.';
+const _invalidLoginPrivateKeyMessage = 'Invalid secret key format.';
 
 class LoginDeviceRegistrationPreview {
   const LoginDeviceRegistrationPreview({

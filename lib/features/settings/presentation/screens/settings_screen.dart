@@ -152,7 +152,7 @@ class SettingsScreen extends ConsumerWidget {
               subtitle: Text(
                 canManageDevices
                     ? 'Add this device to your encrypted messaging devices'
-                    : 'Linked-device sessions cannot update the device list. Sign in here with your main nsec if you want to register this device.',
+                    : 'Linked-device sessions cannot update the device list. Sign in here with your main Secret Key if you want to register this device.',
               ),
               onTap: deviceState.isUpdating
                   ? null
@@ -243,7 +243,7 @@ class SettingsScreen extends ConsumerWidget {
             title: Text(
               authState.isLinkedDevice
                   ? 'Export Device Key'
-                  : 'Export Private Key',
+                  : 'Export Secret Key',
             ),
             subtitle: Text(
               authState.isLinkedDevice
@@ -587,10 +587,10 @@ class SettingsScreen extends ConsumerWidget {
     final authState = ref.read(authStateProvider);
     final dialogTitle = authState.isLinkedDevice
         ? 'Export Device Key'
-        : 'Export Private Key';
+        : 'Export Secret Key';
     final dialogContent = authState.isLinkedDevice
-        ? 'This device stores its own device key, not your main nsec. Copy the device key from this device?'
-        : 'Your private key gives full access to your identity. Never share it with anyone. Make sure to store it securely.';
+        ? 'This device stores its own device key, not your main Secret Key. Copy the device key from this device?'
+        : 'Your secret key gives full access to your identity. Never share it with anyone. Make sure to store it securely.';
     final copyLabel = authState.isLinkedDevice ? 'Copy Device Key' : 'Copy';
 
     final shouldCopy = await showDialog<bool>(
@@ -670,14 +670,14 @@ class SettingsScreen extends ConsumerWidget {
     if (canManageDevices) {
       return 'Scan a link invite from the new device';
     }
-    return 'Only a session with your main nsec can link more devices';
+    return 'Only a session with your main Secret Key can link more devices';
   }
 
   String _deviceAccessSubtitle({required bool isCurrentDeviceRegistered}) {
     if (isCurrentDeviceRegistered) {
-      return 'Read-only on this device. Use a session with your main nsec to add or remove devices.';
+      return 'Read-only on this device. Use a session with your main Secret Key to add or remove devices.';
     }
-    return 'This linked-device session is read-only and is not registered. Sign in here with your main nsec if you want to register this device.';
+    return 'This linked-device session is read-only and is not registered. Sign in here with your main Secret Key if you want to register this device.';
   }
 
   String _ellipsizeMiddle(String value, {int head = 22, int tail = 16}) {
@@ -772,7 +772,7 @@ class SettingsScreen extends ConsumerWidget {
         builder: (dialogContext) => AlertDialog(
           title: const Text('Profile Editing'),
           content: const Text(
-            'This device does not store your main nsec, so it cannot publish profile metadata for the owner key.',
+            'This device does not store your main Secret Key, so it cannot publish profile metadata for the owner key.',
           ),
           actions: [
             TextButton(
@@ -991,7 +991,7 @@ class SettingsScreen extends ConsumerWidget {
       builder: (context) => AlertDialog(
         title: const Text('Register This Device'),
         content: const Text(
-          'This linked-device session cannot update the device list. Sign out here and sign in again with your main nsec if you want this device to become your owner session.',
+          'This linked-device session cannot update the device list. Sign out here and sign in again with your main Secret Key if you want this device to become your owner session.',
         ),
         actions: [
           TextButton(
@@ -1210,7 +1210,7 @@ class SettingsScreen extends ConsumerWidget {
         title: const Text('Logout?'),
         content: const Text(
           'This signs you out and deletes local chats from this device. '
-          'Keep your private key to log back in later.',
+          'Keep your secret key to log back in later.',
         ),
         actions: [
           TextButton(

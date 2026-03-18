@@ -262,7 +262,7 @@ class ErrorService {
         return AppError(
           type: AppErrorType.validation,
           message:
-              'This invite was created with the same device key you are using now. If both apps use the same nsec, they appear as one device. Use Link Device for a second device, or open a different invite.',
+              'This invite was created with the same device key you are using now. If both apps use the same Secret Key, they appear as one device. Use Link Device for a second device, or open a different invite.',
           technicalDetails: '${error.code}: $message',
           originalError: error,
           stackTrace: stackTrace,

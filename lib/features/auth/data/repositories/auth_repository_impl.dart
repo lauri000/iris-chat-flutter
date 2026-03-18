@@ -5,8 +5,7 @@ import '../../../../core/services/secure_storage_service.dart';
 import '../../domain/models/identity.dart';
 import '../../domain/repositories/auth_repository.dart';
 
-const _invalidLoginPrivateKeyMessage =
-    'Invalid private key format. Expected nsec.';
+const _invalidLoginPrivateKeyMessage = 'Invalid secret key format.';
 const _invalidDevicePrivateKeyMessage = 'Invalid device private key format.';
 
 /// Implementation of [AuthRepository] using ndr-ffi and secure storage.

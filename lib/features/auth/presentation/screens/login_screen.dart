@@ -417,8 +417,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 TextField(
                   controller: _keyController,
                   decoration: InputDecoration(
-                    labelText: 'Private Key (nsec)',
-                    hintText: 'Enter your private key',
+                    labelText: 'Secret Key',
+                    hintText: 'Enter your secret key',
                     border: const OutlineInputBorder(),
                     suffixIcon: IconButton(
                       icon: const Icon(Icons.close),

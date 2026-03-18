@@ -825,11 +825,11 @@ void main() {
         expect(find.text('Security'), findsOneWidget);
       });
 
-      testWidgets('shows Export Private Key option', (tester) async {
+      testWidgets('shows Export Secret Key option', (tester) async {
         await tester.pumpWidget(buildSettingsScreen(pubkeyHex: testPubkeyHex));
         await tester.pumpAndSettle();
 
-        expect(find.text('Export Private Key'), findsOneWidget);
+        expect(find.text('Export Secret Key'), findsOneWidget);
         expect(find.text('Backup your key securely'), findsOneWidget);
         expect(find.byIcon(Icons.key), findsOneWidget);
       });
@@ -878,7 +878,7 @@ void main() {
         await tester.tap(exportTile, warnIfMissed: false);
         await tester.pumpAndSettle();
 
-        expect(find.text('Export Private Key'), findsAtLeastNWidgets(1));
+        expect(find.text('Export Secret Key'), findsAtLeastNWidgets(1));
         expect(
           find.textContaining('Never share it with anyone'),
           findsOneWidget,
@@ -985,7 +985,7 @@ void main() {
         expect(find.text('Device Access'), findsOneWidget);
         expect(
           find.text(
-            'Read-only on this device. Use a session with your main nsec to add or remove devices.',
+            'Read-only on this device. Use a session with your main Secret Key to add or remove devices.',
           ),
           findsOneWidget,
         );
@@ -1018,17 +1018,19 @@ void main() {
 
         expect(
           find.text(
-            'This linked-device session is read-only and is not registered. Sign in here with your main nsec if you want to register this device.',
+            'This linked-device session is read-only and is not registered. Sign in here with your main Secret Key if you want to register this device.',
           ),
           findsOneWidget,
         );
         expect(
-          find.text('Only a session with your main nsec can link more devices'),
+          find.text(
+            'Only a session with your main Secret Key can link more devices',
+          ),
           findsOneWidget,
         );
         expect(
           find.text(
-            'Linked-device sessions cannot update the device list. Sign in here with your main nsec if you want to register this device.',
+            'Linked-device sessions cannot update the device list. Sign in here with your main Secret Key if you want to register this device.',
           ),
           findsOneWidget,
         );
@@ -1068,7 +1070,7 @@ void main() {
           expect(find.text('Register This Device'), findsAtLeastNWidgets(1));
           expect(
             find.text(
-              'This linked-device session cannot update the device list. Sign out here and sign in again with your main nsec if you want this device to become your owner session.',
+              'This linked-device session cannot update the device list. Sign out here and sign in again with your main Secret Key if you want this device to become your owner session.',
             ),
             findsOneWidget,
           );
@@ -1102,7 +1104,7 @@ void main() {
 
           expect(
             find.text(
-              'Only a session with your main nsec can link more devices',
+              'Only a session with your main Secret Key can link more devices',
             ),
             findsNothing,
           );

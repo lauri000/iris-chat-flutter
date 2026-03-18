@@ -14,7 +14,7 @@ void main() {
 
       expect(mapped.type, AppErrorType.validation);
       expect(mapped.message, contains('same device key'));
-      expect(mapped.message, contains('same nsec'));
+      expect(mapped.message, contains('same Secret Key'));
       expect(mapped.message, contains('Link Device'));
       expect(mapped.isRetryable, isFalse);
     });
