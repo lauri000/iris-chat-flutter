@@ -117,13 +117,16 @@ class SessionLocalDatasource {
   Future<void> recomputeDerivedFieldsFromMessages(String id) async {
     final db = await _db;
 
-    // Last message (already excludes purged/expired rows since those are deleted).
+    // Nostr message timestamps are second-precision, while optimistic local
+    // messages can briefly have sub-second precision. Order by whole seconds
+    // first, then let later inserts win ties so incoming replies in the same
+    // second can displace earlier local optimistic messages.
     final last = await db.query(
       'messages',
       columns: ['text', 'timestamp'],
       where: 'session_id = ?',
       whereArgs: [id],
-      orderBy: 'timestamp DESC',
+      orderBy: 'CAST(timestamp / 1000 AS INTEGER) DESC, rowid DESC',
       limit: 1,
     );
 

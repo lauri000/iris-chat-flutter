@@ -12,6 +12,9 @@ class SessionNotifier extends StateNotifier<SessionState> {
   final SessionManagerService _sessionManagerService;
   static const Duration _kLoadTimeout = Duration(seconds: 3);
 
+  static int _messageOrderSecond(DateTime timestamp) =>
+      timestamp.millisecondsSinceEpoch ~/ 1000;
+
   void _armPeerSession(String recipientPubkeyHex) {
     final normalized = recipientPubkeyHex.trim().toLowerCase();
     if (normalized.isEmpty) return;
@@ -246,6 +249,13 @@ class SessionNotifier extends StateNotifier<SessionState> {
     if (index == -1) return;
 
     final current = state.sessions[index];
+    final currentLastMessageAt = current.lastMessageAt;
+    if (currentLastMessageAt != null &&
+        _messageOrderSecond(message.timestamp) <
+            _messageOrderSecond(currentLastMessageAt)) {
+      return;
+    }
+
     final updatedSession = current.copyWith(
       lastMessageAt: message.timestamp,
       lastMessagePreview: buildAttachmentAwarePreview(message.text),

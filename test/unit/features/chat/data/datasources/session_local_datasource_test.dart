@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:iris_chat/core/services/database_service.dart';
 import 'package:iris_chat/features/chat/data/datasources/session_local_datasource.dart';
+import 'package:iris_chat/features/chat/domain/models/message.dart';
 import 'package:iris_chat/features/chat/domain/models/session.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:sqflite/sqflite.dart';
@@ -285,6 +286,84 @@ void main() {
 
         verifyNever(() => mockDb.update(any(), any()));
       });
+    });
+
+    group('recomputeDerivedFieldsFromMessages', () {
+      test(
+        'prefers the later inserted message when multiple messages share a second',
+        () async {
+          final incomingTime = DateTime(2026, 1, 1, 12, 0, 0);
+
+          when(
+            () => mockDb.query(
+              'messages',
+              columns: ['text', 'timestamp'],
+              where: 'session_id = ?',
+              whereArgs: ['session-1'],
+              orderBy: 'CAST(timestamp / 1000 AS INTEGER) DESC, rowid DESC',
+              limit: 1,
+            ),
+          ).thenAnswer(
+            (_) async => [
+              {
+                'text': 'Their reply',
+                'timestamp': incomingTime.millisecondsSinceEpoch,
+              },
+            ],
+          );
+          when(
+            () => mockDb.rawQuery(
+              'SELECT COUNT(*) as count FROM messages WHERE session_id = ? AND direction = ? AND status != ?',
+              [
+                'session-1',
+                MessageDirection.incoming.name,
+                MessageStatus.seen.name,
+              ],
+            ),
+          ).thenAnswer(
+            (_) async => [
+              {'count': 1},
+            ],
+          );
+          when(
+            () => mockDb.update(
+              'sessions',
+              {
+                'last_message_at': incomingTime.millisecondsSinceEpoch,
+                'last_message_preview': 'Their reply',
+                'unread_count': 1,
+              },
+              where: 'id = ?',
+              whereArgs: ['session-1'],
+            ),
+          ).thenAnswer((_) async => 1);
+
+          await datasource.recomputeDerivedFieldsFromMessages('session-1');
+
+          verify(
+            () => mockDb.query(
+              'messages',
+              columns: ['text', 'timestamp'],
+              where: 'session_id = ?',
+              whereArgs: ['session-1'],
+              orderBy: 'CAST(timestamp / 1000 AS INTEGER) DESC, rowid DESC',
+              limit: 1,
+            ),
+          ).called(1);
+          verify(
+            () => mockDb.update(
+              'sessions',
+              {
+                'last_message_at': incomingTime.millisecondsSinceEpoch,
+                'last_message_preview': 'Their reply',
+                'unread_count': 1,
+              },
+              where: 'id = ?',
+              whereArgs: ['session-1'],
+            ),
+          ).called(1);
+        },
+      );
     });
 
     group('getSessionState', () {

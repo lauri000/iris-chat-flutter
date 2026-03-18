@@ -362,6 +362,97 @@ void main() {
           true,
         );
       });
+
+      test(
+        'does not replace a newer preview when an older message is processed later',
+        () async {
+          final newerTime = DateTime(2026, 1, 1, 12, 0, 5);
+          final session = ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex: 'pubkey1',
+            createdAt: DateTime(2026, 1, 1, 12, 0, 0),
+            lastMessageAt: newerTime,
+            lastMessagePreview: 'Their newer reply',
+          );
+
+          when(
+            () => mockDatasource.saveSession(session),
+          ).thenAnswer((_) async {});
+
+          await notifier.addSession(session);
+
+          final olderMessage = ChatMessage(
+            id: 'msg-older',
+            sessionId: 'session-1',
+            text: 'My older message',
+            timestamp: DateTime(2026, 1, 1, 12, 0, 4, 900),
+            direction: MessageDirection.outgoing,
+            status: MessageStatus.sent,
+          );
+
+          await notifier.updateSessionWithMessage('session-1', olderMessage);
+
+          expect(notifier.state.sessions.first.lastMessageAt, newerTime);
+          expect(
+            notifier.state.sessions.first.lastMessagePreview,
+            'Their newer reply',
+          );
+        },
+      );
+
+      test(
+        'lets a same-second later-processed message replace the current preview',
+        () async {
+          final baseTime = DateTime(2026, 1, 1, 12, 0, 0);
+          final session = ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex: 'pubkey1',
+            createdAt: baseTime,
+          );
+
+          when(
+            () => mockDatasource.saveSession(session),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockDatasource.updateMetadata(
+              any(),
+              lastMessageAt: any(named: 'lastMessageAt'),
+              lastMessagePreview: any(named: 'lastMessagePreview'),
+            ),
+          ).thenAnswer((_) async {});
+
+          await notifier.addSession(session);
+
+          final optimisticOutgoing = ChatMessage(
+            id: 'msg-outgoing',
+            sessionId: 'session-1',
+            text: 'My message',
+            timestamp: baseTime.add(const Duration(milliseconds: 800)),
+            direction: MessageDirection.outgoing,
+            status: MessageStatus.sent,
+          );
+          await notifier.updateSessionWithMessage(
+            'session-1',
+            optimisticOutgoing,
+          );
+
+          final laterIncoming = ChatMessage(
+            id: 'msg-incoming',
+            sessionId: 'session-1',
+            text: 'Their reply',
+            timestamp: baseTime,
+            direction: MessageDirection.incoming,
+            status: MessageStatus.delivered,
+          );
+          await notifier.updateSessionWithMessage('session-1', laterIncoming);
+
+          expect(notifier.state.sessions.first.lastMessageAt, baseTime);
+          expect(
+            notifier.state.sessions.first.lastMessagePreview,
+            'Their reply',
+          );
+        },
+      );
     });
 
     group('incrementUnread', () {
