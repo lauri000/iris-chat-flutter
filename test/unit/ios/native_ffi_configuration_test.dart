@@ -29,46 +29,61 @@ void main() {
       }
     });
 
-    test(
-      'Xcode project enables native Rust FFI for iOS build configurations',
-      () {
-        final projectFile = File('ios/Runner.xcodeproj/project.pbxproj');
-        expect(projectFile.existsSync(), isTrue);
+    test('Xcode project enables native Rust FFI for iOS build configurations', () {
+      final projectFile = File('ios/Runner.xcodeproj/project.pbxproj');
+      expect(projectFile.existsSync(), isTrue);
 
-        final content = projectFile.readAsStringSync();
-        expect(
-          content,
-          contains(
-            'SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG NATIVE_RUST_FFI_ENABLED";',
-          ),
-        );
-        expect(
-          RegExp(
-            'SWIFT_ACTIVE_COMPILATION_CONDITIONS = NATIVE_RUST_FFI_ENABLED;',
-          ).allMatches(content).length,
-          greaterThanOrEqualTo(2),
-          reason: 'Release and Profile should both enable native Rust FFI.',
-        );
-        expect(content, contains('OTHER_LDFLAGS[sdk=iphoneos*]'));
-        expect(content, contains('OTHER_LDFLAGS[sdk=iphonesimulator*]'));
-        expect(content, isNot(contains('libndr_ffi.a in Frameworks')));
-        expect(content, isNot(contains('libhashtree_ffi.a in Frameworks')));
-      },
-    );
+      final content = projectFile.readAsStringSync();
+      expect(
+        content,
+        contains(
+          'SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG NATIVE_RUST_FFI_ENABLED";',
+        ),
+      );
+      expect(
+        RegExp(
+          'SWIFT_ACTIVE_COMPILATION_CONDITIONS = NATIVE_RUST_FFI_ENABLED;',
+        ).allMatches(content).length,
+        greaterThanOrEqualTo(2),
+        reason: 'Release and Profile should both enable native Rust FFI.',
+      );
+      expect(content, contains('OTHER_LDFLAGS[sdk=iphoneos*]'));
+      expect(content, contains('OTHER_LDFLAGS[sdk=iphonesimulator*]'));
+      expect(
+        content,
+        contains(
+          'Frameworks/NdrFfi.xcframework/ios-arm64-simulator/libndr_ffi_sim.a',
+        ),
+      );
+      expect(
+        content,
+        contains(
+          'Frameworks/HashtreeFfi.xcframework/ios-arm64-simulator/libhashtree_ffi_sim.a',
+        ),
+      );
+      expect(
+        content,
+        contains('"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;'),
+        reason: 'The app target must not attempt Intel simulator builds.',
+      );
+      expect(content, isNot(contains('ios-arm64_x86_64-simulator')));
+      expect(content, isNot(contains('libndr_ffi.a in Frameworks')));
+      expect(content, isNot(contains('libhashtree_ffi.a in Frameworks')));
+    });
 
     test(
-      'checked-in Apple xcframeworks provide both device and simulator slices',
+      'checked-in Apple xcframeworks provide arm64 device and simulator slices only',
       () {
         final frameworkExpectations = {
           'ios/Frameworks/NdrFfi.xcframework/Info.plist': const [
             'ios-arm64',
-            'ios-arm64_x86_64-simulator',
+            'ios-arm64-simulator',
             'SupportedPlatformVariant',
             'simulator',
           ],
           'ios/Frameworks/HashtreeFfi.xcframework/Info.plist': const [
             'ios-arm64',
-            'ios-arm64_x86_64-simulator',
+            'ios-arm64-simulator',
             'SupportedPlatformVariant',
             'simulator',
           ],
@@ -83,9 +98,21 @@ void main() {
             expect(
               content,
               contains(snippet),
-              reason: '$path should describe both device and simulator slices.',
+              reason:
+                  '$path should describe both device and arm64 simulator slices.',
             );
           }
+          expect(
+            content,
+            isNot(contains('x86_64')),
+            reason: '$path should not reference Intel simulator artifacts.',
+          );
+          expect(
+            content,
+            isNot(contains('ios-arm64_x86_64-simulator')),
+            reason:
+                '$path should use the arm64-only simulator slice identifier.',
+          );
         });
       },
     );

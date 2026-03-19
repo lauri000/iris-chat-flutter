@@ -1,6 +1,16 @@
 # iOS Native Libraries
 
-This directory contains the native ndr-ffi library for iOS.
+This directory contains the checked-in native Apple archives used by the iOS
+app.
+
+The checked-in `NdrFfi.xcframework` and `HashtreeFfi.xcframework` intentionally
+ship only these slices:
+
+- `ios-arm64`
+- `ios-arm64-simulator`
+
+Do not add `x86_64` simulator slices back. They make the repo much larger and
+are not needed for Apple Silicon development.
 
 ## Building NdrFfi.xcframework
 
@@ -11,7 +21,7 @@ The iOS library must be built on macOS. Follow these steps:
 1. macOS with Xcode installed
 2. Rust with iOS targets:
    ```bash
-   rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+   rustup target add aarch64-apple-ios aarch64-apple-ios-sim
    ```
 
 ### Build Steps
@@ -22,19 +32,36 @@ The iOS library must be built on macOS. Follow these steps:
    cd nostr-double-ratchet
    ```
 
-2. Run the iOS build script:
+2. Build arm64 device and simulator archives only:
    ```bash
-   ./scripts/mobile/build-ios.sh --release
+   cd rust
+   cargo build -p ndr-ffi --target aarch64-apple-ios --target aarch64-apple-ios-sim --release
    ```
 
-3. Copy the built framework:
+3. Reassemble the XCFramework with the checked-in headers and an arm64-only
+   simulator slice:
    ```bash
-   cp -r rust/target/ios/NdrFfi.xcframework /path/to/iris-chat-flutter/ios/Frameworks/
+   IRIS_CHAT_FLUTTER=/path/to/iris-chat-flutter
+   TMPDIR="$(mktemp -d)"
+   cp rust/target/aarch64-apple-ios-sim/release/libndr_ffi.a "$TMPDIR/libndr_ffi_sim.a"
+   xcodebuild -create-xcframework \
+     -library rust/target/aarch64-apple-ios/release/libndr_ffi.a \
+     -headers "$IRIS_CHAT_FLUTTER/ios/Frameworks/NdrFfi.xcframework/ios-arm64/Headers" \
+     -library "$TMPDIR/libndr_ffi_sim.a" \
+     -headers "$IRIS_CHAT_FLUTTER/ios/Frameworks/NdrFfi.xcframework/ios-arm64/Headers" \
+     -output "$TMPDIR/NdrFfi.xcframework"
+   rm -rf "$IRIS_CHAT_FLUTTER/ios/Frameworks/NdrFfi.xcframework"
+   cp -R "$TMPDIR/NdrFfi.xcframework" "$IRIS_CHAT_FLUTTER/ios/Frameworks/"
    ```
 
-4. Copy the Swift bindings:
+4. Generate and copy the Swift bindings:
    ```bash
-   cp rust/target/ios/bindings/ndr_ffi.swift /path/to/iris-chat-flutter/ios/Runner/
+   cargo build -p ndr-ffi
+   cargo run -p ndr-ffi --features uniffi/cli -- \
+     generate --library rust/target/debug/libndr_ffi.dylib \
+     --language swift \
+     --out-dir "$TMPDIR/bindings"
+   cp "$TMPDIR/bindings/ndr_ffi.swift" /path/to/iris-chat-flutter/ios/Runner/
    ```
 
 5. Update the checked-in macOS host archive from the release build:

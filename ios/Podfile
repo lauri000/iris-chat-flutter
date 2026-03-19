@@ -45,7 +45,7 @@ target 'Runner' do
   #
   # Build instructions:
   # 1. cd /path/to/nostr-double-ratchet
-  # 2. ./scripts/mobile/build-ios.sh --release
+  # 2. Build arm64 device and arm64 simulator archives only
   # 3. Copy the NdrFfi.xcframework to ios/Frameworks/
   # 4. Add to Xcode: Runner target > General > Frameworks, Libraries, and Embedded Content
   # 5. Set "Embed & Sign" for the framework
@@ -62,6 +62,7 @@ post_install do |installer|
     # Keep pod targets aligned with app deployment target.
     target.build_configurations.each do |config|
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
     end
   end
 end
