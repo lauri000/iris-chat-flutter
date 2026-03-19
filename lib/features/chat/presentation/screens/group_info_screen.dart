@@ -13,6 +13,7 @@ import '../../domain/models/group.dart';
 import '../../domain/models/session.dart';
 import '../../domain/utils/chat_settings.dart';
 import '../utils/attachment_upload.dart';
+import '../utils/chats_layout.dart';
 import '../widgets/chats_back_button.dart';
 import '../widgets/group_avatar.dart';
 import '../widgets/profile_name_text.dart';
@@ -317,11 +318,13 @@ class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
   Widget build(BuildContext context) {
     final groups = ref.watch(groupStateProvider.select((s) => s.groups));
     final group = _findGroup(groups);
+    final useWideLayout = useChatsWideLayout(context);
 
     if (group == null) {
       return Scaffold(
         appBar: AppBar(
-          leading: const ChatsBackButton(),
+          leading: useWideLayout ? null : const ChatsBackButton(),
+          automaticallyImplyLeading: false,
           title: const Text('Group Info'),
         ),
         body: const Center(child: CircularProgressIndicator()),
@@ -348,7 +351,8 @@ class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        leading: const ChatsBackButton(),
+        leading: useWideLayout ? null : const ChatsBackButton(),
+        automaticallyImplyLeading: false,
         title: const Text('Group Info'),
       ),
       body: ListView(

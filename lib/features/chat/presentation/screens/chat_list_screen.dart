@@ -26,8 +26,48 @@ class ChatListScreen extends ConsumerStatefulWidget {
 }
 
 class _ChatListScreenState extends ConsumerState<ChatListScreen> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const IrisBrandTitle(),
+        actions: [
+          RelayConnectivityIndicator(onTap: () => context.push('/settings')),
+          IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: () => context.push('/chats/new'),
+            tooltip: 'New Chat',
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () => context.push('/settings'),
+          ),
+        ],
+      ),
+      body: const Column(
+        children: [
+          OfflineBanner(),
+          Expanded(child: ChatListPane()),
+        ],
+      ),
+    );
+  }
+}
+
+class ChatListPane extends ConsumerStatefulWidget {
+  const ChatListPane({super.key, this.embedded = false});
+
+  final bool embedded;
+
+  @override
+  ConsumerState<ChatListPane> createState() => _ChatListPaneState();
+}
+
+class _ChatListPaneState extends ConsumerState<ChatListPane> {
   bool _initialProbeDone = false;
   bool _redirected = false;
+
+  bool get _shouldRedirectWhenEmpty => !widget.embedded;
 
   Future<void> _probePersistedThreads() async {
     final sessionState = ref.read(sessionStateProvider);
@@ -53,9 +93,19 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     });
   }
 
+  void _openThread(BuildContext context, _Thread thread) {
+    final path = thread.group != null
+        ? '/groups/${thread.group!.id}'
+        : '/chats/${thread.session!.id}';
+    if (widget.embedded) {
+      context.go(path);
+      return;
+    }
+    context.push(path);
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Rebuild chat list when profile metadata updates (name/avatar changes).
     ref.watch(profileUpdatesProvider);
     final profileService = ref.watch(profileServiceProvider);
     final sessionsLoading = ref.watch(
@@ -70,14 +120,13 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     final groupsError = ref.watch(groupStateProvider.select((s) => s.error));
     final sessions = ref.watch(sessionStateProvider.select((s) => s.sessions));
     final groups = ref.watch(groupStateProvider.select((s) => s.groups));
-    // Don't block showing existing sessions while group metadata is still loading.
     final showInitialLoading =
         (!_initialProbeDone || sessionsLoading || groupsLoading) &&
         sessions.isEmpty &&
         groups.isEmpty;
 
-    // Redirect to new chat if empty (only once after initial load completes)
-    if (_initialProbeDone &&
+    if (_shouldRedirectWhenEmpty &&
+        _initialProbeDone &&
         !sessionsLoading &&
         !groupsLoading &&
         sessionsError == null &&
@@ -94,35 +143,50 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
       });
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const IrisBrandTitle(),
-        actions: [
-          RelayConnectivityIndicator(onTap: () => context.push('/settings')),
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () => context.push('/chats/new'),
-            tooltip: 'New Chat',
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => context.push('/settings'),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          const OfflineBanner(),
-          Expanded(
-            child: showInitialLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _buildChatList(
-                    sessions: sessions,
-                    groups: groups,
-                    profileService: profileService,
+    final body = showInitialLoading
+        ? const Center(child: CircularProgressIndicator())
+        : _buildChatList(
+            sessions: sessions,
+            groups: groups,
+            profileService: profileService,
+          );
+
+    if (!widget.embedded) {
+      return body;
+    }
+
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surface,
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 12, 8),
+              child: Row(
+                children: [
+                  const Expanded(child: IrisBrandTitle()),
+                  RelayConnectivityIndicator(
+                    onTap: () => context.push('/settings'),
                   ),
-          ),
-        ],
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    onPressed: () => context.go('/chats/new'),
+                    tooltip: 'New Chat',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.settings),
+                    onPressed: () => context.push('/settings'),
+                  ),
+                ],
+              ),
+            ),
+            const OfflineBanner(),
+            const Divider(height: 1),
+            Expanded(child: body),
+          ],
+        ),
       ),
     );
   }
@@ -147,7 +211,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
           return _GroupListItem(
             key: ValueKey('group:${group.id}'),
             group: group,
-            onTap: () => context.push('/groups/${group.id}'),
+            onTap: () => _openThread(context, thread),
             onDelete: () async {
               final confirmed = await showDialog<bool>(
                 context: context,
@@ -187,7 +251,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
           session: session,
           displayName: displayName,
           pictureUrl: profile?.picture,
-          onTap: () => context.push('/chats/${session.id}'),
+          onTap: () => _openThread(context, thread),
           onDelete: () async {
             final confirmed = await showDialog<bool>(
               context: context,

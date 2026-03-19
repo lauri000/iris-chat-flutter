@@ -10,6 +10,7 @@ import '../../../../config/providers/invite_provider.dart';
 import '../../../../core/utils/invite_url.dart';
 import '../../../../shared/utils/formatters.dart';
 import '../../../invite/domain/models/invite.dart';
+import '../utils/chats_layout.dart';
 import '../widgets/chats_back_button.dart';
 import '../widgets/iris_brand_title.dart';
 import '../widgets/offline_indicator.dart';
@@ -151,7 +152,7 @@ class _NewChatScreenState extends ConsumerState<NewChatScreen> {
     final sessions = ref.watch(sessionStateProvider.select((s) => s.sessions));
     final hasChats = sessions.isNotEmpty;
     final canPop = Navigator.of(context).canPop();
-    final showBackButton = hasChats || canPop;
+    final showBackButton = !useChatsWideLayout(context) && (hasChats || canPop);
     final inviteState = ref.watch(inviteStateProvider);
 
     return Scaffold(

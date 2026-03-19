@@ -15,6 +15,7 @@ import '../../../../shared/utils/formatters.dart';
 import '../../domain/models/group.dart';
 import '../../domain/models/message.dart';
 import '../utils/attachment_upload.dart';
+import '../utils/chats_layout.dart';
 import '../utils/seen_sync_mixin.dart';
 import '../widgets/chat_message_bubble.dart';
 import '../widgets/chats_back_button.dart';
@@ -384,11 +385,15 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen>
     }
 
     final theme = Theme.of(context);
+    final useWideLayout = useChatsWideLayout(context);
 
     if (group == null) {
       return Scaffold(
         appBar: AppBar(
-          leading: ChatsBackButton(excludeGroupId: widget.groupId),
+          leading: useWideLayout
+              ? null
+              : ChatsBackButton(excludeGroupId: widget.groupId),
+          automaticallyImplyLeading: false,
           title: const Text('Group'),
         ),
         body: const Center(child: CircularProgressIndicator()),
@@ -398,7 +403,10 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen>
 
     return Scaffold(
       appBar: AppBar(
-        leading: ChatsBackButton(excludeGroupId: widget.groupId),
+        leading: useWideLayout
+            ? null
+            : ChatsBackButton(excludeGroupId: widget.groupId),
+        automaticallyImplyLeading: false,
         title: InkWell(
           key: const Key('group-header-info-button'),
           borderRadius: BorderRadius.circular(8),

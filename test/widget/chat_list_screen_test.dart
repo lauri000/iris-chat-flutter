@@ -20,6 +20,7 @@ import 'package:iris_chat/features/chat/domain/models/message.dart';
 import 'package:iris_chat/features/chat/domain/models/session.dart';
 import 'package:iris_chat/features/chat/presentation/screens/chat_list_screen.dart';
 import 'package:iris_chat/features/chat/presentation/screens/chat_screen.dart';
+import 'package:iris_chat/features/chat/presentation/screens/chats_shell_screen.dart';
 import 'package:iris_chat/features/chat/presentation/widgets/unseen_badge.dart';
 import 'package:iris_chat/features/invite/data/datasources/invite_local_datasource.dart';
 import 'package:iris_chat/shared/utils/animal_names.dart';
@@ -261,6 +262,111 @@ void main() {
                   'wss://relay.damus.io': false,
                   'wss://relay.snort.social': false,
                 },
+          ),
+        ),
+        queuedMessageCountProvider.overrideWithValue(0),
+      ],
+      child: ScreenUtilInit(
+        designSize: const Size(390, 844),
+        minTextAdapt: true,
+        builder: (context, _) {
+          return MaterialApp.router(
+            theme: createTestTheme(),
+            routerConfig: router,
+          );
+        },
+      ),
+    );
+  }
+
+  Widget buildChatsShell({
+    required String initialLocation,
+    List<ChatSession> sessions = const [],
+    List<ChatMessage> groups = const [],
+  }) {
+    when(() => mockSessionDatasource.getAllSessions()).thenAnswer(
+      (_) async => sessions,
+    );
+    when(() => mockSessionDatasource.getSession(any())).thenAnswer((
+      invocation,
+    ) async {
+      final requestedSessionId = invocation.positionalArguments.first as String;
+      for (final session in sessions) {
+        if (session.id == requestedSessionId) return session;
+      }
+      return null;
+    });
+    when(() => mockGroupDatasource.getAllGroups()).thenAnswer((_) async => []);
+    when(
+      () => mockSessionDatasource.getSessionState(any()),
+    ).thenAnswer((_) async => null);
+    when(
+      () => mockInviteDatasource.getActiveInvites(),
+    ).thenAnswer((_) async => []);
+    when(
+      () => mockMessageDatasource.getMessagesForSession(
+        any(),
+        limit: any(named: 'limit'),
+        beforeId: any(named: 'beforeId'),
+      ),
+    ).thenAnswer((_) async => const <ChatMessage>[]);
+
+    final router = GoRouter(
+      initialLocation: initialLocation,
+      routes: [
+        GoRoute(
+          path: '/chats',
+          builder: (context, state) => const ChatListScreen(),
+        ),
+        ShellRoute(
+          builder: (context, state, child) => ChatsShellScreen(child: child),
+          routes: [
+            GoRoute(
+              path: '/chats/new',
+              builder: (context, state) =>
+                  const Scaffold(body: Center(child: Text('New Chat Detail'))),
+            ),
+            GoRoute(
+              path: '/chats/:id',
+              builder: (context, state) => Scaffold(
+                appBar: AppBar(title: const Text('Chat Detail')),
+                body: Center(
+                  child: Text('Detail ${state.pathParameters['id']}'),
+                ),
+              ),
+            ),
+          ],
+        ),
+        GoRoute(
+          path: '/settings',
+          builder: (context, state) => const Scaffold(body: Text('Settings')),
+        ),
+      ],
+    );
+
+    return ProviderScope(
+      overrides: [
+        sessionDatasourceProvider.overrideWithValue(mockSessionDatasource),
+        inviteDatasourceProvider.overrideWithValue(mockInviteDatasource),
+        messageSubscriptionProvider.overrideWithValue(mockSessionManagerService),
+        sessionManagerServiceProvider.overrideWithValue(
+          mockSessionManagerService,
+        ),
+        groupDatasourceProvider.overrideWithValue(mockGroupDatasource),
+        groupMessageDatasourceProvider.overrideWithValue(
+          mockGroupMessageDatasource,
+        ),
+        messageDatasourceProvider.overrideWithValue(mockMessageDatasource),
+        profileServiceProvider.overrideWithValue(mockProfileService),
+        imgproxySettingsServiceProvider.overrideWithValue(
+          fakeImgproxySettingsService,
+        ),
+        connectivityStatusProvider.overrideWith(
+          (_) => Stream.value(ConnectivityStatus.online),
+        ),
+        nostrConnectionStatusProvider.overrideWith(
+          (_) => Stream.value(
+            const <String, bool>{'wss://relay.one': true},
           ),
         ),
         queuedMessageCountProvider.overrideWithValue(0),
@@ -677,6 +783,118 @@ void main() {
           );
         },
       );
+    });
+
+    group('wide layout', () {
+      testWidgets('shows chat list beside detail screen on wide windows', (
+        tester,
+      ) async {
+        tester.view.devicePixelRatio = 1.0;
+        tester.view.physicalSize = const Size(1400, 1000);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final sessions = [
+          ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            recipientName: 'Alice',
+            createdAt: DateTime.now(),
+          ),
+          ChatSession(
+            id: 'session-2',
+            recipientPubkeyHex:
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            recipientName: 'Bob',
+            createdAt: DateTime.now(),
+          ),
+        ];
+
+        await tester.pumpWidget(
+          buildChatsShell(
+            initialLocation: '/chats/session-1',
+            sessions: sessions,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Alice'), findsOneWidget);
+        expect(find.text('Bob'), findsOneWidget);
+        expect(find.text('Detail session-1'), findsOneWidget);
+      });
+
+      testWidgets('tapping another thread replaces the wide detail pane', (
+        tester,
+      ) async {
+        tester.view.devicePixelRatio = 1.0;
+        tester.view.physicalSize = const Size(1400, 1000);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final sessions = [
+          ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            recipientName: 'Alice',
+            createdAt: DateTime.now(),
+          ),
+          ChatSession(
+            id: 'session-2',
+            recipientPubkeyHex:
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            recipientName: 'Bob',
+            createdAt: DateTime.now(),
+          ),
+        ];
+
+        await tester.pumpWidget(
+          buildChatsShell(
+            initialLocation: '/chats/session-1',
+            sessions: sessions,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Bob'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Alice'), findsOneWidget);
+        expect(find.text('Bob'), findsOneWidget);
+        expect(find.text('Detail session-2'), findsOneWidget);
+        expect(find.text('Detail session-1'), findsNothing);
+      });
+
+      testWidgets('keeps detail routes single-pane on narrow windows', (
+        tester,
+      ) async {
+        tester.view.devicePixelRatio = 1.0;
+        tester.view.physicalSize = const Size(430, 932);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final sessions = [
+          ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            recipientName: 'Alice',
+            createdAt: DateTime.now(),
+          ),
+        ];
+
+        await tester.pumpWidget(
+          buildChatsShell(
+            initialLocation: '/chats/session-1',
+            sessions: sessions,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Detail session-1'), findsOneWidget);
+        expect(find.text('Alice'), findsNothing);
+      });
     });
   });
 }

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../config/providers/chat_provider.dart';
+import '../utils/chats_layout.dart';
 import '../widgets/chats_back_button.dart';
 import '../widgets/profile_name_text.dart';
 
@@ -54,10 +55,12 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
   Widget build(BuildContext context) {
     final sessions = ref.watch(sessionStateProvider.select((s) => s.sessions));
     final theme = Theme.of(context);
+    final useWideLayout = useChatsWideLayout(context);
 
     return Scaffold(
       appBar: AppBar(
-        leading: const ChatsBackButton(),
+        leading: useWideLayout ? null : const ChatsBackButton(),
+        automaticallyImplyLeading: false,
         title: const Text('New Group'),
       ),
       body: Column(

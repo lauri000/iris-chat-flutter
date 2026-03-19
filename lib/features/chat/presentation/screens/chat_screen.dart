@@ -20,6 +20,7 @@ import '../../domain/models/message.dart';
 import '../../domain/models/session.dart';
 import '../../domain/utils/chat_settings.dart';
 import '../utils/attachment_upload.dart';
+import '../utils/chats_layout.dart';
 import '../utils/seen_sync_mixin.dart';
 import '../widgets/chat_message_bubble.dart';
 import '../widgets/chats_back_button.dart';
@@ -502,6 +503,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final sessionPicture = profile?.picture;
     final timelineEntries = _buildTimelineEntries(messages);
     _maybeAutoScrollForNewTimelineEntries(timelineEntries);
+    final useWideLayout = useChatsWideLayout(context);
     final messageById = <String, ChatMessage>{};
     for (final message in messages) {
       messageById[message.id] = message;
@@ -518,7 +520,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     return Scaffold(
       appBar: AppBar(
-        leading: ChatsBackButton(excludeSessionId: widget.sessionId),
+        leading: useWideLayout
+            ? null
+            : ChatsBackButton(excludeSessionId: widget.sessionId),
+        automaticallyImplyLeading: false,
         title: InkWell(
           key: const Key('chat-header-info-button'),
           borderRadius: BorderRadius.circular(8),

@@ -7,6 +7,7 @@ import '../features/auth/presentation/screens/login_screen.dart';
 import '../features/chat/presentation/screens/app_bootstrap_screen.dart';
 import '../features/chat/presentation/screens/chat_list_screen.dart';
 import '../features/chat/presentation/screens/chat_screen.dart';
+import '../features/chat/presentation/screens/chats_shell_screen.dart';
 import '../features/chat/presentation/screens/create_group_screen.dart';
 import '../features/chat/presentation/screens/group_chat_screen.dart';
 import '../features/chat/presentation/screens/group_info_screen.dart';
@@ -87,15 +88,34 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/chats',
         builder: (context, state) => const ChatListScreen(),
+      ),
+      ShellRoute(
+        builder: (context, state, child) => ChatsShellScreen(child: child),
         routes: [
           GoRoute(
-            path: 'new',
+            path: '/chats/new',
             builder: (context, state) => const NewChatScreen(),
           ),
           GoRoute(
-            path: ':id',
+            path: '/chats/:id',
             builder: (context, state) =>
                 ChatScreen(sessionId: state.pathParameters['id']!),
+          ),
+          GoRoute(
+            path: '/groups/new',
+            builder: (context, state) => const CreateGroupScreen(),
+          ),
+          GoRoute(
+            path: '/groups/:id',
+            builder: (context, state) =>
+                GroupChatScreen(groupId: state.pathParameters['id']!),
+            routes: [
+              GoRoute(
+                path: 'info',
+                builder: (context, state) =>
+                    GroupInfoScreen(groupId: state.pathParameters['id']!),
+              ),
+            ],
           ),
         ],
       ),
@@ -106,22 +126,6 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/invite/scan',
         builder: (context, state) => const ScanInviteScreen(),
-      ),
-      GoRoute(
-        path: '/groups/new',
-        builder: (context, state) => const CreateGroupScreen(),
-      ),
-      GoRoute(
-        path: '/groups/:id',
-        builder: (context, state) =>
-            GroupChatScreen(groupId: state.pathParameters['id']!),
-        routes: [
-          GoRoute(
-            path: 'info',
-            builder: (context, state) =>
-                GroupInfoScreen(groupId: state.pathParameters['id']!),
-          ),
-        ],
       ),
       GoRoute(
         path: '/settings',
