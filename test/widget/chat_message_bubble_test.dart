@@ -68,6 +68,13 @@ void main() {
     await gesture.up();
   }
 
+  BoxDecoration bubbleDecoration(WidgetTester tester, String messageId) {
+    final container = tester.widget<Container>(
+      find.byKey(ValueKey('chat_message_bubble_body_$messageId')),
+    );
+    return container.decoration! as BoxDecoration;
+  }
+
   testWidgets('ChatMessageBubble: hover shows action dock', (tester) async {
     await tester.pumpWidget(
       wrap(
@@ -102,6 +109,58 @@ void main() {
 
     expect(find.byTooltip('Reply'), findsNothing);
   });
+
+  testWidgets('ChatMessageBubble: standalone bubble is fully rounded', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        ChatMessageBubble(
+          message: buildMessage(direction: MessageDirection.outgoing),
+          onReact: (_) async {},
+          onDeleteLocal: () async {},
+          onReply: () {},
+          isFirstInGroup: true,
+          isLastInGroup: true,
+        ),
+      ),
+    );
+
+    expect(
+      bubbleDecoration(tester, 'm1').borderRadius,
+      BorderRadius.circular(16),
+    );
+  });
+
+  testWidgets(
+    'ChatMessageBubble: grouped non-leading incoming bubble hides sender label',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageBubble(
+            message: buildMessage(direction: MessageDirection.incoming),
+            onReact: (_) async {},
+            onDeleteLocal: () async {},
+            onReply: () {},
+            senderLabel: 'Alice',
+            isFirstInGroup: false,
+            isLastInGroup: true,
+          ),
+        ),
+      );
+
+      expect(find.text('Alice'), findsNothing);
+      expect(
+        bubbleDecoration(tester, 'm1').borderRadius,
+        const BorderRadius.only(
+          topLeft: Radius.circular(4),
+          topRight: Radius.circular(16),
+          bottomLeft: Radius.circular(16),
+          bottomRight: Radius.circular(16),
+        ),
+      );
+    },
+  );
 
   testWidgets('ChatMessageBubble: hover does not overflow on narrow layouts', (
     tester,

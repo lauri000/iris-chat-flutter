@@ -495,6 +495,69 @@ void main() {
 
         expect(find.byIcon(Icons.schedule), findsOneWidget);
       });
+
+      testWidgets(
+        'groups same-author DM bubbles across consecutive minutes and tightens spacing',
+        (tester) async {
+          final messages = [
+            ChatMessage(
+              id: 'msg-1',
+              sessionId: testSessionId,
+              text: 'First grouped message',
+              timestamp: DateTime(2026, 1, 1, 12, 1, 5),
+              direction: MessageDirection.incoming,
+              status: MessageStatus.delivered,
+            ),
+            ChatMessage(
+              id: 'msg-2',
+              sessionId: testSessionId,
+              text: 'Second grouped message',
+              timestamp: DateTime(2026, 1, 1, 12, 2, 50),
+              direction: MessageDirection.incoming,
+              status: MessageStatus.delivered,
+            ),
+          ];
+
+          await tester.pumpWidget(buildChatScreen(messages: messages));
+          await tester.pumpAndSettle();
+
+          final firstBubble = tester.widget<Container>(
+            find.byKey(const ValueKey('chat_message_bubble_body_msg-1')),
+          );
+          final secondBubble = tester.widget<Container>(
+            find.byKey(const ValueKey('chat_message_bubble_body_msg-2')),
+          );
+          final firstDecoration = firstBubble.decoration! as BoxDecoration;
+          final secondDecoration = secondBubble.decoration! as BoxDecoration;
+
+          expect(
+            firstDecoration.borderRadius,
+            const BorderRadius.only(
+              topLeft: Radius.circular(16),
+              topRight: Radius.circular(16),
+              bottomLeft: Radius.circular(4),
+              bottomRight: Radius.circular(16),
+            ),
+          );
+          expect(
+            secondDecoration.borderRadius,
+            const BorderRadius.only(
+              topLeft: Radius.circular(4),
+              topRight: Radius.circular(16),
+              bottomLeft: Radius.circular(16),
+              bottomRight: Radius.circular(16),
+            ),
+          );
+
+          final firstRect = tester.getRect(
+            find.byKey(const ValueKey('chat_message_bubble_body_msg-1')),
+          );
+          final secondRect = tester.getRect(
+            find.byKey(const ValueKey('chat_message_bubble_body_msg-2')),
+          );
+          expect(secondRect.top - firstRect.bottom, lessThanOrEqualTo(4));
+        },
+      );
     });
 
     group('message input', () {

@@ -16,6 +16,7 @@ import '../../domain/models/group.dart';
 import '../../domain/models/message.dart';
 import '../utils/attachment_upload.dart';
 import '../utils/chats_layout.dart';
+import '../utils/message_grouping.dart';
 import '../utils/seen_sync_mixin.dart';
 import '../widgets/chat_message_bubble.dart';
 import '../widgets/chats_back_button.dart';
@@ -485,42 +486,72 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen>
                         ),
                         children: [
                           if (showDate) _DateSeparator(date: message.timestamp),
-                          ChatMessageBubble(
-                            key: ValueKey(
-                              'bubble_${message.id}_${message.timestamp.microsecondsSinceEpoch}_$index',
-                            ),
-                            message: message,
-                            replyToMessage: replyToMessage,
-                            onOpenReply: replyToMessage == null
-                                ? null
-                                : () => _scrollToTimelineMessage(
-                                    messages,
-                                    replyToMessage.id,
-                                  ),
-                            onMediaLayoutChanged: _onMessageMediaLayoutChanged,
-                            senderLabel:
-                                (!message.isOutgoing &&
-                                    message.senderPubkeyHex != null &&
-                                    message.senderPubkeyHex!.isNotEmpty)
-                                ? _resolveSenderLabel(message.senderPubkeyHex!)
-                                : null,
-                            onReply: () => _quoteReply(message),
-                            onReact: (emoji) async {
-                              await ref
-                                  .read(groupStateProvider.notifier)
-                                  .sendGroupReaction(
-                                    groupId: widget.groupId,
-                                    messageId: message.id,
-                                    emoji: emoji,
+                          Builder(
+                            builder: (context) {
+                              final previousMessage = index > 0
+                                  ? messages[index - 1]
+                                  : null;
+                              final nextMessage = index + 1 < messages.length
+                                  ? messages[index + 1]
+                                  : null;
+                              final isFirstInGroup =
+                                  previousMessage == null ||
+                                  !canGroupChatMessages(
+                                    previousMessage,
+                                    message,
+                                    isDirectMessage: false,
                                   );
-                            },
-                            onDeleteLocal: () async {
-                              await ref
-                                  .read(groupStateProvider.notifier)
-                                  .deleteGroupMessageLocal(
-                                    widget.groupId,
-                                    message.id,
+                              final isLastInGroup =
+                                  nextMessage == null ||
+                                  !canGroupChatMessages(
+                                    message,
+                                    nextMessage,
+                                    isDirectMessage: false,
                                   );
+
+                              return ChatMessageBubble(
+                                key: ValueKey(
+                                  'bubble_${message.id}_${message.timestamp.microsecondsSinceEpoch}_$index',
+                                ),
+                                message: message,
+                                replyToMessage: replyToMessage,
+                                isFirstInGroup: isFirstInGroup,
+                                isLastInGroup: isLastInGroup,
+                                onOpenReply: replyToMessage == null
+                                    ? null
+                                    : () => _scrollToTimelineMessage(
+                                        messages,
+                                        replyToMessage.id,
+                                      ),
+                                onMediaLayoutChanged:
+                                    _onMessageMediaLayoutChanged,
+                                senderLabel:
+                                    (!message.isOutgoing &&
+                                        message.senderPubkeyHex != null &&
+                                        message.senderPubkeyHex!.isNotEmpty)
+                                    ? _resolveSenderLabel(
+                                        message.senderPubkeyHex!,
+                                      )
+                                    : null,
+                                onReply: () => _quoteReply(message),
+                                onReact: (emoji) async {
+                                  await ref
+                                      .read(groupStateProvider.notifier)
+                                      .sendGroupReaction(
+                                        groupId: widget.groupId,
+                                        messageId: message.id,
+                                        emoji: emoji,
+                                      );
+                                },
+                                onDeleteLocal: () async {
+                                  await ref
+                                      .read(groupStateProvider.notifier)
+                                      .deleteGroupMessageLocal(
+                                        widget.groupId,
+                                        message.id,
+                                      );
+                                },
+                              );
                             },
                           ),
                         ],

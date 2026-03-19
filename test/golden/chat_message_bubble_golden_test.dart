@@ -73,7 +73,7 @@ void main() {
               key: const Key('golden'),
               child: SizedBox(
                 width: 420,
-                height: 260,
+                height: 320,
                 child: Padding(
                   padding: const EdgeInsets.only(top: 32),
                   child: Align(alignment: Alignment.topCenter, child: child),
@@ -87,7 +87,7 @@ void main() {
   }
 
   testWidgets('golden: ChatMessageBubble idle', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(600, 260));
+    await tester.binding.setSurfaceSize(const Size(600, 320));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(
@@ -101,20 +101,37 @@ void main() {
               ChatMessageBubble(
                 message: buildMessage(
                   direction: MessageDirection.incoming,
-                  text: 'incoming',
+                  text: 'first incoming',
                 ),
                 onReact: (_) async {},
                 onDeleteLocal: () async {},
                 onReply: () {},
+                senderLabel: 'Alice',
+                isFirstInGroup: true,
+                isLastInGroup: false,
+              ),
+              ChatMessageBubble(
+                message: buildMessage(
+                  direction: MessageDirection.incoming,
+                  text: 'second incoming',
+                ),
+                onReact: (_) async {},
+                onDeleteLocal: () async {},
+                onReply: () {},
+                senderLabel: 'Alice',
+                isFirstInGroup: false,
+                isLastInGroup: true,
               ),
               ChatMessageBubble(
                 message: buildMessage(
                   direction: MessageDirection.outgoing,
-                  text: 'yo',
+                  text: 'standalone outgoing',
                 ),
                 onReact: (_) async {},
                 onDeleteLocal: () async {},
                 onReply: () {},
+                isFirstInGroup: true,
+                isLastInGroup: true,
               ),
             ],
           ),
@@ -130,7 +147,7 @@ void main() {
   });
 
   testWidgets('golden: ChatMessageBubble hover actions', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(600, 260));
+    await tester.binding.setSurfaceSize(const Size(600, 320));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(

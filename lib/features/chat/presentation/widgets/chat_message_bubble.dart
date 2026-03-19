@@ -30,6 +30,8 @@ class ChatMessageBubble extends ConsumerStatefulWidget {
     this.replyToMessage,
     this.onOpenReply,
     this.onMediaLayoutChanged,
+    this.isFirstInGroup = true,
+    this.isLastInGroup = true,
   });
 
   final ChatMessage message;
@@ -50,6 +52,8 @@ class ChatMessageBubble extends ConsumerStatefulWidget {
 
   /// Called when media content resolves and may change message layout height.
   final VoidCallback? onMediaLayoutChanged;
+  final bool isFirstInGroup;
+  final bool isLastInGroup;
 
   @override
   ConsumerState<ChatMessageBubble> createState() => _ChatMessageBubbleState();
@@ -69,20 +73,9 @@ class _ChatMessageBubbleState extends ConsumerState<ChatMessageBubble> {
     r'((?:https?:\/\/|www\.)[^\s<]+)',
     caseSensitive: false,
   );
-  static const _margin = EdgeInsets.symmetric(vertical: 4);
   static const _padding = EdgeInsets.symmetric(horizontal: 12, vertical: 8);
-  static const _outgoingBorderRadius = BorderRadius.only(
-    topLeft: Radius.circular(16),
-    topRight: Radius.circular(16),
-    bottomLeft: Radius.circular(16),
-    bottomRight: Radius.circular(4),
-  );
-  static const _incomingBorderRadius = BorderRadius.only(
-    topLeft: Radius.circular(16),
-    topRight: Radius.circular(16),
-    bottomLeft: Radius.circular(4),
-    bottomRight: Radius.circular(16),
-  );
+  static const _bubbleRadius = Radius.circular(16);
+  static const _compactRadius = Radius.circular(4);
 
   @override
   void dispose() {
@@ -292,6 +285,68 @@ class _ChatMessageBubbleState extends ConsumerState<ChatMessageBubble> {
         duration: const Duration(seconds: 1),
       ),
     );
+  }
+
+  EdgeInsets _bubbleMargin(bool hasReactions) {
+    return EdgeInsets.only(
+      top: widget.isFirstInGroup ? 4 : 1,
+      bottom: hasReactions ? 0 : (widget.isLastInGroup ? 4 : 1),
+    );
+  }
+
+  BorderRadius _bubbleBorderRadius(bool isOutgoing) {
+    final isFirstInGroup = widget.isFirstInGroup;
+    final isLastInGroup = widget.isLastInGroup;
+
+    if (isFirstInGroup && isLastInGroup) {
+      return BorderRadius.circular(16);
+    }
+
+    if (isFirstInGroup) {
+      return isOutgoing
+          ? const BorderRadius.only(
+              topLeft: _bubbleRadius,
+              topRight: _bubbleRadius,
+              bottomLeft: _bubbleRadius,
+              bottomRight: _compactRadius,
+            )
+          : const BorderRadius.only(
+              topLeft: _bubbleRadius,
+              topRight: _bubbleRadius,
+              bottomLeft: _compactRadius,
+              bottomRight: _bubbleRadius,
+            );
+    }
+
+    if (isLastInGroup) {
+      return isOutgoing
+          ? const BorderRadius.only(
+              topLeft: _bubbleRadius,
+              topRight: _compactRadius,
+              bottomLeft: _bubbleRadius,
+              bottomRight: _bubbleRadius,
+            )
+          : const BorderRadius.only(
+              topLeft: _compactRadius,
+              topRight: _bubbleRadius,
+              bottomLeft: _bubbleRadius,
+              bottomRight: _bubbleRadius,
+            );
+    }
+
+    return isOutgoing
+        ? const BorderRadius.only(
+            topLeft: _bubbleRadius,
+            topRight: _compactRadius,
+            bottomLeft: _bubbleRadius,
+            bottomRight: _compactRadius,
+          )
+        : const BorderRadius.only(
+            topLeft: _compactRadius,
+            topRight: _bubbleRadius,
+            bottomLeft: _compactRadius,
+            bottomRight: _bubbleRadius,
+          );
   }
 
   Future<Uint8List> _loadAttachmentBytes(HashtreeFileLink link) async {
@@ -685,7 +740,8 @@ class _ChatMessageBubbleState extends ConsumerState<ChatMessageBubble> {
     final senderLabel =
         (!isOutgoing &&
             widget.senderLabel != null &&
-            widget.senderLabel!.trim().isNotEmpty)
+            widget.senderLabel!.trim().isNotEmpty &&
+            widget.isFirstInGroup)
         ? widget.senderLabel!.trim()
         : null;
 
@@ -779,17 +835,13 @@ class _ChatMessageBubbleState extends ConsumerState<ChatMessageBubble> {
                           key: ValueKey(
                             'chat_message_bubble_body_${message.id}',
                           ),
-                          margin: _margin.copyWith(
-                            bottom: hasReactions ? 0 : 4,
-                          ),
+                          margin: _bubbleMargin(hasReactions),
                           padding: _padding,
                           decoration: BoxDecoration(
                             color: isOutgoing
                                 ? theme.colorScheme.primaryContainer
                                 : theme.colorScheme.surfaceContainerHighest,
-                            borderRadius: isOutgoing
-                                ? _outgoingBorderRadius
-                                : _incomingBorderRadius,
+                            borderRadius: _bubbleBorderRadius(isOutgoing),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.end,

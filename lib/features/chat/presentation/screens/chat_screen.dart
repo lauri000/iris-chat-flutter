@@ -21,6 +21,7 @@ import '../../domain/models/session.dart';
 import '../../domain/utils/chat_settings.dart';
 import '../utils/attachment_upload.dart';
 import '../utils/chats_layout.dart';
+import '../utils/message_grouping.dart';
 import '../utils/seen_sync_mixin.dart';
 import '../widgets/chat_message_bubble.dart';
 import '../widgets/chats_back_button.dart';
@@ -597,44 +598,72 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         children: [
                           if (showDate) _DateSeparator(date: entry.timestamp),
                           if (message != null)
-                            ChatMessageBubble(
-                              key: ValueKey(
-                                'bubble_${message.id}_${message.timestamp.microsecondsSinceEpoch}_$index',
-                              ),
-                              message: message,
-                              replyToMessage: replyToMessage,
-                              onOpenReply: replyToMessage == null
-                                  ? null
-                                  : () => _scrollToTimelineMessage(
-                                      timelineEntries,
-                                      replyToMessage.id,
-                                    ),
-                              onMediaLayoutChanged:
-                                  _onMessageMediaLayoutChanged,
-                              onReply: () => _quoteReply(message),
-                              onReact: (emoji) async {
-                                final myPubkey =
-                                    ref.read(authStateProvider).pubkeyHex ??
-                                    'me';
-                                await ref
-                                    .read(chatStateProvider.notifier)
-                                    .sendReaction(
-                                      widget.sessionId,
-                                      message.id,
-                                      emoji,
-                                      myPubkey,
+                            Builder(
+                              builder: (context) {
+                                final previousMessage = index > 0
+                                    ? timelineEntries[index - 1].message
+                                    : null;
+                                final nextMessage =
+                                    index + 1 < timelineEntries.length
+                                    ? timelineEntries[index + 1].message
+                                    : null;
+                                final isFirstInGroup =
+                                    previousMessage == null ||
+                                    !canGroupChatMessages(
+                                      previousMessage,
+                                      message,
+                                      isDirectMessage: true,
                                     );
-                              },
-                              onDeleteLocal: () async {
-                                await ref
-                                    .read(chatStateProvider.notifier)
-                                    .deleteMessageLocal(
-                                      widget.sessionId,
-                                      message.id,
+                                final isLastInGroup =
+                                    nextMessage == null ||
+                                    !canGroupChatMessages(
+                                      message,
+                                      nextMessage,
+                                      isDirectMessage: true,
                                     );
-                                await ref
-                                    .read(sessionStateProvider.notifier)
-                                    .refreshSession(widget.sessionId);
+
+                                return ChatMessageBubble(
+                                  key: ValueKey(
+                                    'bubble_${message.id}_${message.timestamp.microsecondsSinceEpoch}_$index',
+                                  ),
+                                  message: message,
+                                  replyToMessage: replyToMessage,
+                                  isFirstInGroup: isFirstInGroup,
+                                  isLastInGroup: isLastInGroup,
+                                  onOpenReply: replyToMessage == null
+                                      ? null
+                                      : () => _scrollToTimelineMessage(
+                                          timelineEntries,
+                                          replyToMessage.id,
+                                        ),
+                                  onMediaLayoutChanged:
+                                      _onMessageMediaLayoutChanged,
+                                  onReply: () => _quoteReply(message),
+                                  onReact: (emoji) async {
+                                    final myPubkey =
+                                        ref.read(authStateProvider).pubkeyHex ??
+                                        'me';
+                                    await ref
+                                        .read(chatStateProvider.notifier)
+                                        .sendReaction(
+                                          widget.sessionId,
+                                          message.id,
+                                          emoji,
+                                          myPubkey,
+                                        );
+                                  },
+                                  onDeleteLocal: () async {
+                                    await ref
+                                        .read(chatStateProvider.notifier)
+                                        .deleteMessageLocal(
+                                          widget.sessionId,
+                                          message.id,
+                                        );
+                                    await ref
+                                        .read(sessionStateProvider.notifier)
+                                        .refreshSession(widget.sessionId);
+                                  },
+                                );
                               },
                             )
                           else
