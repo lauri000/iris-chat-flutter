@@ -125,6 +125,61 @@ void main() {
   });
 
   test(
+    'duplicate incoming group message clears typing and suppresses older typing',
+    () async {
+      const groupId = 'group-1';
+
+      notifier.state = notifier.state.copyWith(
+        groups: [
+          ChatGroup(
+            id: groupId,
+            name: 'Group 1',
+            members: [myPubkey, peerPubkey],
+            admins: [myPubkey],
+            createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+            accepted: true,
+          ),
+        ],
+      );
+
+      when(() => mockGroupMessageDatasource.messageExists(any())).thenAnswer((
+        invocation,
+      ) async {
+        final key = invocation.positionalArguments.single as String;
+        return key == 'msg-duplicate-newer';
+      });
+
+      const typingRumorJson =
+          '{"id":"typing-before-duplicate","pubkey":"$peerPubkey","created_at":1700000001,"kind":25,"content":"typing","tags":[["l","$groupId"],["ms","1700000001000"]]}';
+      const duplicateMessageRumorJson =
+          '{"id":"msg-duplicate-newer","pubkey":"$peerPubkey","created_at":1700000002,"kind":14,"content":"hello","tags":[["l","$groupId"],["ms","1700000002000"]]}';
+      const staleTypingRumorJson =
+          '{"id":"typing-stale-after-duplicate","pubkey":"$peerPubkey","created_at":1700000001,"kind":25,"content":"typing","tags":[["l","$groupId"],["ms","1700000001000"]]}';
+
+      await notifier.handleIncomingGroupRumorJson(typingRumorJson);
+      expect(notifier.state.typingStates[groupId] ?? false, isTrue);
+
+      await notifier.handleIncomingGroupRumorJson(duplicateMessageRumorJson);
+      expect(
+        notifier.state.typingStates[groupId] ?? false,
+        isFalse,
+        reason:
+            'A newer incoming group message should clear typing even when the '
+            'message is already persisted.',
+      );
+
+      await notifier.handleIncomingGroupRumorJson(staleTypingRumorJson);
+      expect(
+        notifier.state.typingStates[groupId] ?? false,
+        isFalse,
+        reason:
+            'A duplicate newer group message should still advance the last '
+            'message timestamp so older typing remains suppressed.',
+      );
+    },
+  );
+
+  test(
     'group typing stop clears indicator when expiration equals future created_at',
     () async {
       const groupId = 'group-1';

@@ -974,9 +974,16 @@ class GroupNotifier extends StateNotifier<GroupState> {
   }) async {
     final myPubkeyHex = _myPubkeyHex();
     final isMine = myPubkeyHex != null && senderPubkeyHex == myPubkeyHex;
+    final messageTimestamp = rumorTimestamp(rumor);
+    final messageTimestampMs = messageTimestamp.millisecondsSinceEpoch;
 
     // Persist first to avoid duplicates across UI rebuilds.
-    if (await _groupMessageDatasource.messageExists(rumor.id)) return;
+    if (await _groupMessageDatasource.messageExists(rumor.id)) {
+      if (!isMine) {
+        _clearGroupTyping(groupId, messageTimestampMs: messageTimestampMs);
+      }
+      return;
+    }
 
     final expiresAtSeconds = getExpirationTimestampSeconds(rumor.tags);
     if (isExpirationElapsed(expiresAtSeconds)) {
@@ -989,7 +996,7 @@ class GroupNotifier extends StateNotifier<GroupState> {
       id: rumor.id,
       sessionId: groupSessionId(groupId),
       text: rumor.content,
-      timestamp: rumorTimestamp(rumor),
+      timestamp: messageTimestamp,
       expiresAt: expiresAtSeconds,
       direction: isMine ? MessageDirection.outgoing : MessageDirection.incoming,
       status: isMine ? MessageStatus.sent : MessageStatus.delivered,
@@ -1000,10 +1007,7 @@ class GroupNotifier extends StateNotifier<GroupState> {
     );
 
     if (!isMine) {
-      _clearGroupTyping(
-        groupId,
-        messageTimestampMs: rumorTimestamp(rumor).millisecondsSinceEpoch,
-      );
+      _clearGroupTyping(groupId, messageTimestampMs: messageTimestampMs);
     }
 
     await _groupMessageDatasource.saveMessage(message);

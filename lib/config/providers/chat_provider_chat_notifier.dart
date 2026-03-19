@@ -323,15 +323,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }) async {
     try {
       if (!mounted) return null;
-      if (eventId != null && await _messageDatasource.messageExists(eventId)) {
-        return null;
-      }
+      final hasDuplicateOuterEvent =
+          eventId != null && await _messageDatasource.messageExists(eventId);
       if (!mounted) return null;
 
       final rumor = NostrRumor.tryParse(content);
 
       // Legacy fallback: treat decrypted plaintext as a chat message.
       if (rumor == null) {
+        if (hasDuplicateOuterEvent) return null;
         if (!mounted) return null;
         final existingSession = await _sessionDatasource.getSessionByRecipient(
           senderPubkeyHex,
@@ -378,6 +378,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
         await addReceivedMessage(message);
         return message;
+      }
+
+      if (hasDuplicateOuterEvent && rumor.kind != _kChatMessageKind) {
+        return null;
       }
 
       final ownerPubkeyHex = _sessionManagerService.ownerPubkeyHex;
@@ -542,10 +546,30 @@ class ChatNotifier extends StateNotifier<ChatState> {
           pTagPubkey == recipientPubkey;
 
       final isMine = isDirectSelfMessage || isSenderCopySelfMessage;
+      final messageTimestamp = rumorTimestamp(rumor);
+      final messageTimestampMs = messageTimestamp.millisecondsSinceEpoch;
+
+      if (hasDuplicateOuterEvent) {
+        if (!isMine) {
+          _clearRemoteTyping(
+            sessionId,
+            recipientPubkeyHex: peerPubkeyHex,
+            messageTimestampMs: messageTimestampMs,
+          );
+        }
+        return null;
+      }
 
       // De-dup using stable inner id.
       if (await _messageDatasource.messageExists(rumor.id)) {
         if (!mounted) return null;
+        if (!isMine) {
+          _clearRemoteTyping(
+            sessionId,
+            recipientPubkeyHex: peerPubkeyHex,
+            messageTimestampMs: messageTimestampMs,
+          );
+        }
         // When we receive a relay echo / self-copy of our own outgoing message,
         // use it to backfill the outer event id so reactions can reference it.
         if (isMine && eventId != null && eventId.isNotEmpty) {
@@ -579,7 +603,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         id: rumor.id,
         sessionId: sessionId,
         text: rumor.content,
-        timestamp: rumorTimestamp(rumor),
+        timestamp: messageTimestamp,
         expiresAt: expiresAtSeconds,
         direction: isMine
             ? MessageDirection.outgoing
@@ -594,7 +618,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         _clearRemoteTyping(
           sessionId,
           recipientPubkeyHex: peerPubkeyHex,
-          messageTimestampMs: rumorTimestamp(rumor).millisecondsSinceEpoch,
+          messageTimestampMs: messageTimestampMs,
         );
       }
 
@@ -666,13 +690,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
       if (existing != null) return candidate;
     }
 
-    if (owner != null && candidates.isNotEmpty && candidates.last == owner) {
-      return owner;
-    }
-
     for (final candidate in candidates) {
       if (owner != null && candidate == owner) continue;
       if (candidate.isNotEmpty) return candidate;
+    }
+
+    if (owner != null && candidates.isNotEmpty && candidates.last == owner) {
+      return owner;
     }
 
     return null;

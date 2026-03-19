@@ -1431,6 +1431,56 @@ void main() {
       );
 
       test(
+        'routes sender-copy self message to peer session even before the peer chat exists',
+        () async {
+          const ownerPubkey =
+              '1111111111111111111111111111111111111111111111111111111111111111';
+          const peerPubkey =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+          const linkedOwnDevicePubkey =
+              '3333333333333333333333333333333333333333333333333333333333333333';
+
+          when(
+            () => mockSessionManagerService.ownerPubkeyHex,
+          ).thenReturn(ownerPubkey);
+          when(
+            () => mockMessageDatasource.messageExists(any()),
+          ).thenAnswer((_) async => false);
+          when(
+            () => mockMessageDatasource.saveMessage(any()),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(any()),
+          ).thenAnswer((_) async => null);
+          when(
+            () => mockSessionDatasource.saveSession(any()),
+          ).thenAnswer((_) async {});
+
+          const rumorJson =
+              '{"id":"self-copy-linked-2","pubkey":"$linkedOwnDevicePubkey","created_at":1700000004,"kind":14,"content":"hello to new peer chat","tags":[["p","$peerPubkey"]]}';
+
+          final received = await notifier.receiveDecryptedMessage(
+            ownerPubkey,
+            rumorJson,
+          );
+
+          expect(received, isNotNull);
+          expect(received!.sessionId, peerPubkey);
+          expect(received.isOutgoing, isTrue);
+          expect(notifier.state.messages[peerPubkey], isNotNull);
+          expect(
+            notifier.state.messages[peerPubkey]!.single.text,
+            'hello to new peer chat',
+          );
+          verify(
+            () => mockSessionManagerService.setupUser(peerPubkey),
+          ).called(1);
+          verify(() => mockSessionDatasource.saveSession(any())).called(1);
+          verify(() => mockMessageDatasource.saveMessage(any())).called(1);
+        },
+      );
+
+      test(
         'ignores typing when event second matches the last incoming message second',
         () async {
           const peerPubkey =
@@ -1635,6 +1685,67 @@ void main() {
               'Match iris-chat behavior: incoming messages clear typing state.',
         );
       });
+
+      test(
+        'duplicate incoming message by outer event id clears typing and suppresses older typing',
+        () async {
+          const peerPubkey =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+          final session = ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex: peerPubkey,
+            createdAt: DateTime.now(),
+          );
+
+          when(() => mockSessionManagerService.ownerPubkeyHex).thenReturn(null);
+          when(() => mockMessageDatasource.messageExists(any())).thenAnswer((
+            invocation,
+          ) async {
+            final key = invocation.positionalArguments.single as String;
+            return key == 'outer-msg-newer';
+          });
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(peerPubkey),
+          ).thenAnswer((_) async => session);
+
+          const typingRumorJson =
+              '{"id":"typing-before-duplicate","pubkey":"$peerPubkey","created_at":1700000005,"kind":25,"content":"typing","tags":[["ms","1700000005000"]]}';
+          const duplicateMessageRumorJson =
+              '{"id":"msg-newer","pubkey":"$peerPubkey","created_at":1700000006,"kind":14,"content":"hello again","tags":[["ms","1700000006000"]]}';
+          const staleTypingRumorJson =
+              '{"id":"typing-stale-after-duplicate","pubkey":"$peerPubkey","created_at":1700000005,"kind":25,"content":"typing","tags":[["ms","1700000005000"]]}';
+
+          await notifier.receiveDecryptedMessage(peerPubkey, typingRumorJson);
+          expect(notifier.state.typingStates[session.id] ?? false, isTrue);
+
+          await notifier.receiveDecryptedMessage(
+            peerPubkey,
+            duplicateMessageRumorJson,
+            eventId: 'outer-msg-newer',
+          );
+
+          expect(
+            notifier.state.typingStates[session.id] ?? false,
+            isFalse,
+            reason:
+                'A newer incoming message should clear typing even when the '
+                'message is already stored under the same outer event id.',
+          );
+
+          await notifier.receiveDecryptedMessage(
+            peerPubkey,
+            staleTypingRumorJson,
+          );
+
+          expect(
+            notifier.state.typingStates[session.id] ?? false,
+            isFalse,
+            reason:
+                'A duplicate newer message should still advance the last '
+                'remote-message timestamp so older typing stays suppressed.',
+          );
+        },
+      );
 
       test(
         'does not auto-send delivered receipt when delivery receipts are disabled',
