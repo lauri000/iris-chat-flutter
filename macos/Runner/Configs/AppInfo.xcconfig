@@ -12,3 +12,6 @@ PRODUCT_BUNDLE_IDENTIFIER = to.iris.irisChat
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 to.iris. All rights reserved.
+
+// This repo checks in an arm64-only Rust static library for macOS.
+EXCLUDED_ARCHS[sdk=macosx*] = x86_64
