@@ -145,20 +145,16 @@ class SettingsScreen extends ConsumerWidget {
             ),
             onTap: canManageDevices ? () => context.push('/invite/scan') : null,
           ),
-          if (!deviceState.isCurrentDeviceRegistered)
+          if (canManageDevices && !deviceState.isCurrentDeviceRegistered)
             ListTile(
               leading: const Icon(Icons.app_registration),
               title: const Text('Register This Device'),
-              subtitle: Text(
-                canManageDevices
-                    ? 'Add this device to your encrypted messaging devices'
-                    : 'Linked-device sessions cannot update the device list. Sign in here with your main Secret Key if you want to register this device.',
+              subtitle: const Text(
+                'Add this device to your encrypted messaging devices',
               ),
               onTap: deviceState.isUpdating
                   ? null
-                  : canManageDevices
-                  ? () => _registerCurrentDevice(context, ref)
-                  : () => _showRegisterCurrentDeviceHelpDialog(context),
+                  : () => _registerCurrentDevice(context, ref),
             ),
           if (!authState.hasOwnerKey)
             ListTile(
@@ -982,24 +978,6 @@ class SettingsScreen extends ConsumerWidget {
     final error = ref.read(deviceManagerProvider).error;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(error ?? 'Failed to register device')),
-    );
-  }
-
-  Future<void> _showRegisterCurrentDeviceHelpDialog(BuildContext context) {
-    return showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Register This Device'),
-        content: const Text(
-          'This linked-device session cannot update the device list. Sign out here and sign in again with your main Secret Key if you want this device to become your owner session.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
     );
   }
 

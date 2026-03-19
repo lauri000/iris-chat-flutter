@@ -1032,9 +1032,9 @@ void main() {
           find.text(
             'Linked-device sessions cannot update the device list. Sign in here with your main Secret Key if you want to register this device.',
           ),
-          findsOneWidget,
+          findsNothing,
         );
-        expect(find.text('Register This Device'), findsOneWidget);
+        expect(find.text('Register This Device'), findsNothing);
         expect(
           find.text('Manage registered devices on your main client'),
           findsNothing,
@@ -1042,7 +1042,7 @@ void main() {
       });
 
       testWidgets(
-        'unregistered linked-device sessions show register help dialog',
+        'unregistered linked-device sessions do not render register action',
         (tester) async {
           await tester.pumpWidget(
             buildSettingsScreen(
@@ -1064,16 +1064,8 @@ void main() {
           );
           await tester.pumpAndSettle();
 
-          await tester.tap(find.text('Register This Device'));
-          await tester.pumpAndSettle();
-
-          expect(find.text('Register This Device'), findsAtLeastNWidgets(1));
-          expect(
-            find.text(
-              'This linked-device session cannot update the device list. Sign out here and sign in again with your main Secret Key if you want this device to become your owner session.',
-            ),
-            findsOneWidget,
-          );
+          expect(find.text('Register This Device'), findsNothing);
+          expect(find.byIcon(Icons.app_registration), findsNothing);
         },
       );
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:iris_chat/config/providers/app_bootstrap_provider.dart';
@@ -17,7 +18,6 @@ import 'package:mocktail/mocktail.dart';
 import 'package:nostr/nostr.dart' as nostr;
 
 import '../test_helpers.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 class MockAuthRepository extends Mock implements AuthRepository {}
 
