@@ -8,6 +8,7 @@ export 'ffi_keypair.dart';
 export 'group_create_fanout.dart';
 export 'group_create_result.dart';
 export 'group_decrypted_result.dart';
+export 'group_outer_subscription_plan_result.dart';
 export 'group_send_result.dart';
 export 'ndr_exception.dart';
 export 'pubsub_event.dart';

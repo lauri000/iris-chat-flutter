@@ -828,6 +828,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -928,6 +930,8 @@ internal interface UniffiLib : Library {
     fun uniffi_ndr_ffi_fn_method_sessionmanagerhandle_group_handle_outer_event(`ptr`: Pointer,`eventJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_ndr_ffi_fn_method_sessionmanagerhandle_group_known_sender_event_pubkeys(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ndr_ffi_fn_method_sessionmanagerhandle_group_outer_subscription_plan(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_ndr_ffi_fn_method_sessionmanagerhandle_group_remove(`ptr`: Pointer,`groupId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -1149,6 +1153,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_group_known_sender_event_pubkeys(
     ): Short
+    fun uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_group_outer_subscription_plan(
+    ): Short
     fun uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_group_remove(
     ): Short
     fun uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_group_send_event(
@@ -1308,6 +1314,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_group_known_sender_event_pubkeys() != 34048.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_group_outer_subscription_plan() != 65323.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_group_remove() != 33157.toShort()) {
@@ -2629,6 +2638,12 @@ public interface SessionManagerHandleInterface {
     fun `groupKnownSenderEventPubkeys`(): List<kotlin.String>
     
     /**
+     * Return the current group outer authors and which ones were newly added
+     * since the last sync plan request for this handle.
+     */
+    fun `groupOuterSubscriptionPlan`(): GroupOuterSubscriptionPlanResult
+    
+    /**
      * Remove a group from the embedded GroupManager.
      */
     fun `groupRemove`(`groupId`: kotlin.String)
@@ -2984,6 +2999,22 @@ open class SessionManagerHandle: Disposable, AutoCloseable, SessionManagerHandle
     callWithPointer {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_ndr_ffi_fn_method_sessionmanagerhandle_group_known_sender_event_pubkeys(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Return the current group outer authors and which ones were newly added
+     * since the last sync plan request for this handle.
+     */override fun `groupOuterSubscriptionPlan`(): GroupOuterSubscriptionPlanResult {
+            return FfiConverterTypeGroupOuterSubscriptionPlanResult.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_ndr_ffi_fn_method_sessionmanagerhandle_group_outer_subscription_plan(
         it, _status)
 }
     }
@@ -3568,6 +3599,41 @@ public object FfiConverterTypeGroupDecryptedResult: FfiConverterRustBuffer<Group
             FfiConverterUInt.write(value.`messageNumber`, buf)
             FfiConverterString.write(value.`innerEventJson`, buf)
             FfiConverterString.write(value.`innerEventId`, buf)
+    }
+}
+
+
+
+/**
+ * Shared outer-subscription sync plan for group sender-event authors.
+ */
+data class GroupOuterSubscriptionPlanResult (
+    var `authors`: List<kotlin.String>, 
+    var `addedAuthors`: List<kotlin.String>
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeGroupOuterSubscriptionPlanResult: FfiConverterRustBuffer<GroupOuterSubscriptionPlanResult> {
+    override fun read(buf: ByteBuffer): GroupOuterSubscriptionPlanResult {
+        return GroupOuterSubscriptionPlanResult(
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: GroupOuterSubscriptionPlanResult) = (
+            FfiConverterSequenceString.allocationSize(value.`authors`) +
+            FfiConverterSequenceString.allocationSize(value.`addedAuthors`)
+    )
+
+    override fun write(value: GroupOuterSubscriptionPlanResult, buf: ByteBuffer) {
+            FfiConverterSequenceString.write(value.`authors`, buf)
+            FfiConverterSequenceString.write(value.`addedAuthors`, buf)
     }
 }
 

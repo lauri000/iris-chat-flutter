@@ -119,6 +119,8 @@ public class NdrFfiPlugin: NSObject, FlutterPlugin {
                 try handleSessionManagerGroupRemove(call: call, result: result)
             case "sessionManagerGroupKnownSenderEventPubkeys":
                 try handleSessionManagerGroupKnownSenderEventPubkeys(call: call, result: result)
+            case "sessionManagerGroupOuterSubscriptionPlan":
+                try handleSessionManagerGroupOuterSubscriptionPlan(call: call, result: result)
             case "sessionManagerGroupSendEvent":
                 try handleSessionManagerGroupSendEvent(call: call, result: result)
             case "sessionManagerGroupHandleIncomingSessionEvent":
@@ -888,6 +890,21 @@ public class NdrFfiPlugin: NSObject, FlutterPlugin {
             throw PluginError.handleNotFound("SessionManager handle not found: \(id)")
         }
         result(manager.groupKnownSenderEventPubkeys())
+    }
+
+    private func handleSessionManagerGroupOuterSubscriptionPlan(call: FlutterMethodCall, result: FlutterResult) throws {
+        guard let args = call.arguments as? [String: Any],
+              let id = args["id"] as? String else {
+            throw PluginError.invalidArguments("Missing id")
+        }
+        guard let manager = sessionManagerHandles[id] else {
+            throw PluginError.handleNotFound("SessionManager handle not found: \(id)")
+        }
+        let plan = manager.groupOuterSubscriptionPlan()
+        result([
+            "authors": plan.authors,
+            "addedAuthors": plan.addedAuthors,
+        ])
     }
 
     private func handleSessionManagerGroupSendEvent(call: FlutterMethodCall, result: FlutterResult) throws {

@@ -389,6 +389,8 @@ class SessionManagerService {
   final Map<String, int> _processedMessageEventIds = <String, int>{};
   final Map<String, Timer> _relayBackfillTimersByOwner = <String, Timer>{};
   static const String _groupOuterSubId = 'ndr-group-outer';
+  static const Duration _groupOuterBackfillDuration = Duration(seconds: 2);
+  static const int _groupOuterBackfillSinceSeconds = 3600;
   static const String _processedMessageEventIdsFileName =
       'processed_message_event_ids.json';
   static const int _kMaxProcessedMessageEventIds = 4000;
@@ -1343,26 +1345,60 @@ class SessionManagerService {
     final manager = _manager;
     if (manager == null) return;
 
-    final next = await manager.groupKnownSenderEventPubkeys();
-    next.sort();
+    final plan = await manager.groupOuterSubscriptionPlan();
+    final next = [...plan.authors]..sort();
     final deduped = <String>[];
     for (final pk in next) {
       if (pk.isEmpty) continue;
       if (deduped.isNotEmpty && deduped.last == pk) continue;
       deduped.add(pk);
     }
+    final addedSenderEventPubkeys = <String>[
+      ...{
+        for (final pk in plan.addedAuthors)
+          if (pk.trim().isNotEmpty) pk.trim().toLowerCase(),
+      },
+    ]..sort();
 
-    if (_stringListsEqual(_groupOuterSenderEventPubkeys, deduped)) {
+    final authorsChanged = !_stringListsEqual(_groupOuterSenderEventPubkeys, deduped);
+    if (!authorsChanged && addedSenderEventPubkeys.isEmpty) {
       return;
     }
 
-    _groupOuterSenderEventPubkeys = deduped;
-    _nostrService.closeSubscription(_groupOuterSubId);
-    if (deduped.isEmpty) return;
+    if (authorsChanged) {
+      _groupOuterSenderEventPubkeys = deduped;
+      _nostrService.closeSubscription(_groupOuterSubId);
+      if (deduped.isNotEmpty) {
+        _nostrService.subscribeWithIdRaw(_groupOuterSubId, <String, dynamic>{
+          'kinds': const [1060],
+          'authors': deduped,
+        });
+      }
+    }
 
-    _nostrService.subscribeWithIdRaw(_groupOuterSubId, <String, dynamic>{
+    if (addedSenderEventPubkeys.isNotEmpty) {
+      _backfillRecentGroupOuterEvents(addedSenderEventPubkeys);
+    }
+  }
+
+  void _backfillRecentGroupOuterEvents(List<String> senderEventPubkeys) {
+    if (_isDisposed || senderEventPubkeys.isEmpty) return;
+
+    final sinceSeconds =
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 -
+        _groupOuterBackfillSinceSeconds;
+    final subscriptionId =
+        '$_groupOuterSubId-backfill-${DateTime.now().microsecondsSinceEpoch}';
+
+    _nostrService.subscribeWithIdRaw(subscriptionId, <String, dynamic>{
       'kinds': const [1060],
-      'authors': deduped,
+      'authors': senderEventPubkeys,
+      'since': sinceSeconds > 0 ? sinceSeconds : 0,
+    });
+
+    Timer(_groupOuterBackfillDuration, () {
+      if (_isDisposed) return;
+      _nostrService.closeSubscription(subscriptionId);
     });
   }
 

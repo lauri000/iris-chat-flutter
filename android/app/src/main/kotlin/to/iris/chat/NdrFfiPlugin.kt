@@ -89,6 +89,7 @@ class NdrFfiPlugin : FlutterPlugin, MethodCallHandler {
                 "sessionManagerGroupUpsert" -> handleSessionManagerGroupUpsert(call, result)
                 "sessionManagerGroupRemove" -> handleSessionManagerGroupRemove(call, result)
                 "sessionManagerGroupKnownSenderEventPubkeys" -> handleSessionManagerGroupKnownSenderEventPubkeys(call, result)
+                "sessionManagerGroupOuterSubscriptionPlan" -> handleSessionManagerGroupOuterSubscriptionPlan(call, result)
                 "sessionManagerGroupSendEvent" -> handleSessionManagerGroupSendEvent(call, result)
                 "sessionManagerGroupHandleIncomingSessionEvent" -> handleSessionManagerGroupHandleIncomingSessionEvent(call, result)
                 "sessionManagerGroupHandleOuterEvent" -> handleSessionManagerGroupHandleOuterEvent(call, result)
@@ -756,6 +757,21 @@ class NdrFfiPlugin : FlutterPlugin, MethodCallHandler {
         val manager = sessionManagerHandles[id]
             ?: throw IllegalArgumentException("SessionManager handle not found: $id")
         result.success(manager.groupKnownSenderEventPubkeys())
+    }
+
+    private fun handleSessionManagerGroupOuterSubscriptionPlan(call: MethodCall, result: Result) {
+        val id = call.argument<String>("id")
+            ?: throw IllegalArgumentException("Missing id")
+
+        val manager = sessionManagerHandles[id]
+            ?: throw IllegalArgumentException("SessionManager handle not found: $id")
+        val plan = manager.groupOuterSubscriptionPlan()
+        result.success(
+            mapOf(
+                "authors" to plan.authors,
+                "addedAuthors" to plan.addedAuthors,
+            ),
+        )
     }
 
     private fun handleSessionManagerGroupSendEvent(call: MethodCall, result: Result) {

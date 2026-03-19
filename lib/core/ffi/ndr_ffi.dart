@@ -845,6 +845,23 @@ class SessionManagerHandle {
     return result.map((e) => e.toString()).toList();
   }
 
+  /// Return the current group outer subscription authors and newly added authors.
+  Future<GroupOuterSubscriptionPlanResult> groupOuterSubscriptionPlan() async {
+    final result = await _channel.invokeMethod<Map>(
+      'sessionManagerGroupOuterSubscriptionPlan',
+      {'id': _id},
+    );
+    if (result == null) {
+      return const GroupOuterSubscriptionPlanResult(
+        authors: <String>[],
+        addedAuthors: <String>[],
+      );
+    }
+    return GroupOuterSubscriptionPlanResult.fromMap(
+      Map<String, dynamic>.from(result),
+    );
+  }
+
   /// Send a group event through native GroupManager.
   Future<GroupSendResult> groupSendEvent({
     required String groupId,

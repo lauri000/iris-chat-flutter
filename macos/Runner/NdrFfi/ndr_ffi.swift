@@ -1113,6 +1113,12 @@ public protocol SessionManagerHandleProtocol : AnyObject {
     func groupKnownSenderEventPubkeys()  -> [String]
     
     /**
+     * Return the current group outer authors and which ones were newly added
+     * since the last sync plan request for this handle.
+     */
+    func groupOuterSubscriptionPlan()  -> GroupOuterSubscriptionPlanResult
+    
+    /**
      * Remove a group from the embedded GroupManager.
      */
     func groupRemove(groupId: String) 
@@ -1404,6 +1410,17 @@ open func groupHandleOuterEvent(eventJson: String)throws  -> GroupDecryptedResul
 open func groupKnownSenderEventPubkeys() -> [String] {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
     uniffi_ndr_ffi_fn_method_sessionmanagerhandle_group_known_sender_event_pubkeys(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Return the current group outer authors and which ones were newly added
+     * since the last sync plan request for this handle.
+     */
+open func groupOuterSubscriptionPlan() -> GroupOuterSubscriptionPlanResult {
+    return try!  FfiConverterTypeGroupOuterSubscriptionPlanResult.lift(try! rustCall() {
+    uniffi_ndr_ffi_fn_method_sessionmanagerhandle_group_outer_subscription_plan(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -2255,6 +2272,75 @@ public func FfiConverterTypeGroupDecryptedResult_lift(_ buf: RustBuffer) throws 
 #endif
 public func FfiConverterTypeGroupDecryptedResult_lower(_ value: GroupDecryptedResult) -> RustBuffer {
     return FfiConverterTypeGroupDecryptedResult.lower(value)
+}
+
+
+/**
+ * Shared outer-subscription sync plan for group sender-event authors.
+ */
+public struct GroupOuterSubscriptionPlanResult {
+    public var authors: [String]
+    public var addedAuthors: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(authors: [String], addedAuthors: [String]) {
+        self.authors = authors
+        self.addedAuthors = addedAuthors
+    }
+}
+
+
+
+extension GroupOuterSubscriptionPlanResult: Equatable, Hashable {
+    public static func ==(lhs: GroupOuterSubscriptionPlanResult, rhs: GroupOuterSubscriptionPlanResult) -> Bool {
+        if lhs.authors != rhs.authors {
+            return false
+        }
+        if lhs.addedAuthors != rhs.addedAuthors {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(authors)
+        hasher.combine(addedAuthors)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeGroupOuterSubscriptionPlanResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> GroupOuterSubscriptionPlanResult {
+        return
+            try GroupOuterSubscriptionPlanResult(
+                authors: FfiConverterSequenceString.read(from: &buf), 
+                addedAuthors: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: GroupOuterSubscriptionPlanResult, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.authors, into: &buf)
+        FfiConverterSequenceString.write(value.addedAuthors, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeGroupOuterSubscriptionPlanResult_lift(_ buf: RustBuffer) throws -> GroupOuterSubscriptionPlanResult {
+    return try FfiConverterTypeGroupOuterSubscriptionPlanResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeGroupOuterSubscriptionPlanResult_lower(_ value: GroupOuterSubscriptionPlanResult) -> RustBuffer {
+    return FfiConverterTypeGroupOuterSubscriptionPlanResult.lower(value)
 }
 
 
@@ -3359,6 +3445,9 @@ private var initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_group_known_sender_event_pubkeys() != 34048) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_group_outer_subscription_plan() != 65323) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ndr_ffi_checksum_method_sessionmanagerhandle_group_remove() != 33157) {
