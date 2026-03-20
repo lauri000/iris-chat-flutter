@@ -205,6 +205,36 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
+  /// Remove all in-memory state for a deleted session.
+  void removeSessionState(String sessionId, {String? recipientPubkeyHex}) {
+    final removedMessages = state.messages[sessionId] ?? const <ChatMessage>[];
+
+    final nextMessages = {...state.messages}..remove(sessionId);
+    final nextSending = {...state.sendingStates};
+    for (final message in removedMessages) {
+      nextSending.remove(message.id);
+    }
+
+    final keys = _typingKeysForSession(
+      sessionId,
+      recipientPubkeyHex: recipientPubkeyHex,
+    );
+    final nextTyping = {...state.typingStates};
+    for (final key in keys) {
+      _typingExpiryTimers[key]?.cancel();
+      _typingExpiryTimers.remove(key);
+      _lastRemoteMessageAtMs.remove(key);
+      nextTyping.remove(key);
+    }
+    _lastTypingSentAtMs.remove(sessionId);
+
+    state = state.copyWith(
+      messages: nextMessages,
+      sendingStates: nextSending,
+      typingStates: nextTyping,
+    );
+  }
+
   /// Send a queued message (called by OfflineQueueService).
   Future<void> sendQueuedMessage(
     String sessionId,

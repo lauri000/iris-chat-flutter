@@ -410,6 +410,50 @@ void main() {
       });
     });
 
+    group('removeSessionState', () {
+      test('removes deleted session messages and ephemeral state', () {
+        final deletedMessage = ChatMessage(
+          id: 'msg-1',
+          sessionId: 'session-1',
+          text: 'Hello',
+          timestamp: DateTime.now(),
+          direction: MessageDirection.outgoing,
+          status: MessageStatus.pending,
+        );
+        final keptMessage = ChatMessage(
+          id: 'msg-2',
+          sessionId: 'session-2',
+          text: 'Still here',
+          timestamp: DateTime.now(),
+          direction: MessageDirection.incoming,
+          status: MessageStatus.delivered,
+        );
+
+        notifier.state = ChatState(
+          messages: {
+            'session-1': [deletedMessage],
+            'session-2': [keptMessage],
+          },
+          sendingStates: const {'msg-1': true, 'msg-2': true},
+          typingStates: const {
+            'session-1': true,
+            'peer-1': true,
+            'session-2': true,
+          },
+        );
+
+        notifier.removeSessionState('session-1', recipientPubkeyHex: 'peer-1');
+
+        expect(notifier.state.messages.containsKey('session-1'), isFalse);
+        expect(notifier.state.messages['session-2'], [keptMessage]);
+        expect(notifier.state.sendingStates.containsKey('msg-1'), isFalse);
+        expect(notifier.state.sendingStates['msg-2'], isTrue);
+        expect(notifier.state.typingStates.containsKey('session-1'), isFalse);
+        expect(notifier.state.typingStates.containsKey('peer-1'), isFalse);
+        expect(notifier.state.typingStates['session-2'], isTrue);
+      });
+    });
+
     group('clearError', () {
       test('clears error state', () async {
         when(

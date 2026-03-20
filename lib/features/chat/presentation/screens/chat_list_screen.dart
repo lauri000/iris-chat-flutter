@@ -69,6 +69,63 @@ class _ChatListPaneState extends ConsumerState<ChatListPane> {
 
   bool get _shouldRedirectWhenEmpty => !widget.embedded;
 
+  Future<bool> _confirmDelete({
+    required BuildContext context,
+    required String title,
+    required String message,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  Future<bool> _deleteGroup(BuildContext context, ChatGroup group) async {
+    final confirmed = await _confirmDelete(
+      context: context,
+      title: 'Delete group?',
+      message:
+          'This will delete the group and all its messages from this device. This action cannot be undone.',
+    );
+    if (!confirmed) return false;
+
+    await ref.read(groupStateProvider.notifier).deleteGroup(group.id);
+    return true;
+  }
+
+  Future<bool> _deleteSession(BuildContext context, ChatSession session) async {
+    final confirmed = await _confirmDelete(
+      context: context,
+      title: 'Delete conversation?',
+      message:
+          'This will delete all messages in this conversation. This action cannot be undone.',
+    );
+    if (!confirmed) return false;
+
+    ref
+        .read(chatStateProvider.notifier)
+        .removeSessionState(
+          session.id,
+          recipientPubkeyHex: session.recipientPubkeyHex,
+        );
+    await ref.read(sessionStateProvider.notifier).deleteSession(session.id);
+    return true;
+  }
+
   Future<void> _probePersistedThreads() async {
     final sessionState = ref.read(sessionStateProvider);
     final groupState = ref.read(groupStateProvider);
@@ -212,32 +269,7 @@ class _ChatListPaneState extends ConsumerState<ChatListPane> {
             key: ValueKey('group:${group.id}'),
             group: group,
             onTap: () => _openThread(context, thread),
-            onDelete: () async {
-              final confirmed = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Delete group?'),
-                  content: const Text(
-                    'This will delete the group and all its messages from this device. This action cannot be undone.',
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancel'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Delete'),
-                    ),
-                  ],
-                ),
-              );
-              if (confirmed ?? false) {
-                await ref
-                    .read(groupStateProvider.notifier)
-                    .deleteGroup(group.id);
-              }
-            },
+            onConfirmDelete: () => _deleteGroup(context, group),
           );
         }
 
@@ -252,32 +284,7 @@ class _ChatListPaneState extends ConsumerState<ChatListPane> {
           displayName: displayName,
           pictureUrl: profile?.picture,
           onTap: () => _openThread(context, thread),
-          onDelete: () async {
-            final confirmed = await showDialog<bool>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('Delete conversation?'),
-                content: const Text(
-                  'This will delete all messages in this conversation. This action cannot be undone.',
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Cancel'),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: const Text('Delete'),
-                  ),
-                ],
-              ),
-            );
-            if (confirmed ?? false) {
-              await ref
-                  .read(sessionStateProvider.notifier)
-                  .deleteSession(session.id);
-            }
-          },
+          onConfirmDelete: () => _deleteSession(context, session),
         );
       },
     );
@@ -399,12 +406,12 @@ class _GroupListItem extends StatelessWidget {
     super.key,
     required this.group,
     required this.onTap,
-    required this.onDelete,
+    required this.onConfirmDelete,
   });
 
   final ChatGroup group;
   final VoidCallback onTap;
-  final VoidCallback onDelete;
+  final Future<bool> Function() onConfirmDelete;
 
   static const _dismissiblePadding = EdgeInsets.only(right: 16);
   static const _unreadSpacing = SizedBox(height: 4);
@@ -425,7 +432,7 @@ class _GroupListItem extends StatelessWidget {
         padding: _dismissiblePadding,
         child: Icon(Icons.delete, color: theme.colorScheme.onError),
       ),
-      onDismissed: (_) => onDelete(),
+      confirmDismiss: (_) => onConfirmDelete(),
       child: ListTile(
         leading: GroupAvatar(
           groupName: group.name,
@@ -473,14 +480,14 @@ class _ChatListItem extends StatelessWidget {
     required this.displayName,
     this.pictureUrl,
     required this.onTap,
-    required this.onDelete,
+    required this.onConfirmDelete,
   });
 
   final ChatSession session;
   final String displayName;
   final String? pictureUrl;
   final VoidCallback onTap;
-  final VoidCallback onDelete;
+  final Future<bool> Function() onConfirmDelete;
 
   static const _dismissiblePadding = EdgeInsets.only(right: 16);
   static const _unreadSpacing = SizedBox(height: 4);
@@ -498,7 +505,7 @@ class _ChatListItem extends StatelessWidget {
         padding: _dismissiblePadding,
         child: Icon(Icons.delete, color: theme.colorScheme.onError),
       ),
-      onDismissed: (_) => onDelete(),
+      confirmDismiss: (_) => onConfirmDelete(),
       child: ListTile(
         leading: ProfileAvatar(
           pubkeyHex: session.recipientPubkeyHex,

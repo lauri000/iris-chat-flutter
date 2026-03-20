@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:iris_chat/config/providers/chat_provider.dart';
 import 'package:iris_chat/config/providers/nostr_provider.dart';
 import 'package:iris_chat/core/ffi/models/send_text_with_inner_id_result.dart';
@@ -170,6 +171,104 @@ void main() {
             isLoading: false,
           );
           onSessionNotifierCreated?.call(notifier);
+          return notifier;
+        }),
+      ],
+    );
+  }
+
+  Widget buildChatScreenRouter({
+    List<ChatMessage> messages = const [],
+    ChatSession? session,
+    List<ChatSession>? sessions,
+    String sessionId = testSessionId,
+  }) {
+    final effectiveSession = session ?? testSession;
+    final effectiveSessions = sessions ?? [effectiveSession];
+    final profileService = ProfileService(mockNostrService);
+    for (final chatSession in effectiveSessions) {
+      profileService.upsertProfile(
+        pubkey: chatSession.recipientPubkeyHex,
+        displayName: chatSession.recipientName,
+        updatedAt: DateTime(2026, 2, 1),
+      );
+    }
+
+    when(
+      () => mockSessionDatasource.getAllSessions(),
+    ).thenAnswer((_) async => effectiveSessions);
+    when(() => mockSessionDatasource.getSession(any())).thenAnswer((
+      invocation,
+    ) async {
+      final requestedSessionId = invocation.positionalArguments.first as String;
+      for (final chatSession in effectiveSessions) {
+        if (chatSession.id == requestedSessionId) return chatSession;
+      }
+      return null;
+    });
+    when(
+      () => mockMessageDatasource.getMessagesForSession(
+        any(),
+        limit: any(named: 'limit'),
+        beforeId: any(named: 'beforeId'),
+      ),
+    ).thenAnswer((_) async => messages);
+    when(
+      () => mockMessageDatasource.updateIncomingStatusByRumorId(any(), any()),
+    ).thenAnswer((_) async {});
+    when(
+      () => mockSessionDatasource.deleteSession(any()),
+    ).thenAnswer((_) async {});
+    when(
+      () => mockSessionManagerService.sendReceipt(
+        recipientPubkeyHex: any(named: 'recipientPubkeyHex'),
+        receiptType: any(named: 'receiptType'),
+        messageIds: any(named: 'messageIds'),
+      ),
+    ).thenAnswer((_) async {});
+    when(
+      () => mockSessionManagerService.sendTyping(
+        recipientPubkeyHex: any(named: 'recipientPubkeyHex'),
+        expiresAtSeconds: any(named: 'expiresAtSeconds'),
+      ),
+    ).thenAnswer((_) async {});
+
+    final router = GoRouter(
+      initialLocation: '/chats/$sessionId',
+      routes: [
+        GoRoute(
+          path: '/chats',
+          builder: (context, state) =>
+              const Scaffold(body: Center(child: Text('Chat List'))),
+        ),
+        GoRoute(
+          path: '/chats/:id',
+          builder: (context, state) =>
+              ChatScreen(sessionId: state.pathParameters['id']!),
+        ),
+      ],
+    );
+
+    return createTestRouterApp(
+      router,
+      overrides: [
+        sessionDatasourceProvider.overrideWithValue(mockSessionDatasource),
+        messageDatasourceProvider.overrideWithValue(mockMessageDatasource),
+        nostrServiceProvider.overrideWithValue(mockNostrService),
+        sessionManagerServiceProvider.overrideWithValue(
+          mockSessionManagerService,
+        ),
+        profileServiceProvider.overrideWithValue(profileService),
+        sessionStateProvider.overrideWith((ref) {
+          final notifier = SessionNotifier(
+            mockSessionDatasource,
+            profileService,
+            mockSessionManagerService,
+          );
+          notifier.state = SessionState(
+            sessions: effectiveSessions,
+            isLoading: false,
+          );
           return notifier;
         }),
       ],
@@ -708,6 +807,16 @@ void main() {
         expect(find.text('Close'), findsOneWidget);
       });
 
+      testWidgets('shows delete chat action in dialog', (tester) async {
+        await tester.pumpWidget(buildChatScreen());
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key('chat-header-info-button')));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Delete chat'), findsOneWidget);
+      });
+
       testWidgets('closes dialog when close button tapped', (tester) async {
         await tester.pumpWidget(buildChatScreen());
         await tester.pumpAndSettle();
@@ -742,6 +851,39 @@ void main() {
           findsOneWidget,
         );
       });
+
+      testWidgets(
+        'delete chat action removes session and returns to chat list',
+        (tester) async {
+          final message = ChatMessage(
+            id: 'msg-1',
+            sessionId: testSessionId,
+            text: 'Hello',
+            timestamp: DateTime.now(),
+            direction: MessageDirection.incoming,
+            status: MessageStatus.delivered,
+          );
+
+          await tester.pumpWidget(buildChatScreenRouter(messages: [message]));
+          await tester.pumpAndSettle();
+
+          await tester.tap(find.byKey(const Key('chat-header-info-button')));
+          await tester.pumpAndSettle();
+
+          await tester.ensureVisible(find.text('Delete chat'));
+          await tester.tap(find.text('Delete chat'));
+          await tester.pumpAndSettle();
+
+          expect(find.text('Delete conversation?'), findsOneWidget);
+          await tester.tap(find.text('Delete'));
+          await tester.pumpAndSettle();
+
+          expect(find.text('Chat List'), findsOneWidget);
+          verify(
+            () => mockSessionDatasource.deleteSession(testSessionId),
+          ).called(1);
+        },
+      );
     });
 
     group('session switching', () {

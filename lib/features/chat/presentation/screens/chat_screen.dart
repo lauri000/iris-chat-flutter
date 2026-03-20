@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../config/providers/auth_provider.dart';
 import '../../../../config/providers/chat_provider.dart';
@@ -55,6 +56,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   int? _lastObservedTtlSeconds;
   final List<_DisappearingNoticeEntry> _disappearingNotices = [];
   int _nextNoticeSequence = 0;
+  bool _isResolvingMissingSession = false;
   DateTime? _pinBottomUntil;
   ChatMessage? _replyingTo;
   int _lastTimelineEntryCount = 0;
@@ -82,6 +84,81 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   Future<void> _reloadConversationState() async {
     await ref.read(chatStateProvider.notifier).loadMessages(widget.sessionId);
     scheduleSeenSync();
+  }
+
+  Future<void> _resolveMissingSession() async {
+    if (_isResolvingMissingSession || !mounted) return;
+    _isResolvingMissingSession = true;
+
+    try {
+      await ref
+          .read(sessionStateProvider.notifier)
+          .refreshSession(widget.sessionId);
+      if (!mounted) return;
+
+      final stillMissing = ref
+          .read(sessionStateProvider)
+          .sessions
+          .every((session) => session.id != widget.sessionId);
+      if (stillMissing) {
+        _navigateAfterDeletedSession();
+      }
+    } finally {
+      _isResolvingMissingSession = false;
+    }
+  }
+
+  void _navigateAfterDeletedSession() {
+    if (!mounted) return;
+
+    final navigator = Navigator.of(context);
+    final wideLayout = useChatsWideLayout(context);
+    if (!wideLayout && navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+
+    final router = GoRouter.maybeOf(context);
+    if (router != null) {
+      router.go(wideLayout ? '/chats/new' : '/chats');
+      return;
+    }
+
+    if (navigator.canPop()) {
+      navigator.pop();
+    }
+  }
+
+  Future<void> _deleteChat(ChatSession session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete conversation?'),
+        content: const Text(
+          'This will delete all messages in this conversation. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (!(confirmed ?? false)) return;
+
+    ref
+        .read(chatStateProvider.notifier)
+        .removeSessionState(
+          session.id,
+          recipientPubkeyHex: session.recipientPubkeyHex,
+        );
+    _navigateAfterDeletedSession();
+    await ref.read(sessionStateProvider.notifier).deleteSession(session.id);
   }
 
   @override
@@ -478,16 +555,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   Widget build(BuildContext context) {
     ref.watch(profileUpdatesProvider);
     final profileService = ref.watch(profileServiceProvider);
-    // Optimized: Use select() to only watch the specific session we need,
-    // avoiding rebuilds when other sessions change
     final session = ref.watch(
-      sessionStateProvider.select(
-        (state) => state.sessions.firstWhere(
-          (s) => s.id == widget.sessionId,
-          orElse: () => throw Exception('Session not found'),
-        ),
-      ),
+      sessionStateProvider.select((state) {
+        for (final session in state.sessions) {
+          if (session.id == widget.sessionId) return session;
+        }
+        return null;
+      }),
     );
+    if (session == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_resolveMissingSession());
+      });
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final messages = ref.watch(sessionMessagesProvider(widget.sessionId));
     scheduleSeenSync();
     final isTyping = ref.watch(
@@ -938,6 +1019,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         ),
                       ),
                     const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          unawaited(_deleteChat(session));
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: theme.colorScheme.error,
+                        ),
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('Delete chat'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(

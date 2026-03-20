@@ -284,9 +284,9 @@ void main() {
     List<ChatSession> sessions = const [],
     List<ChatMessage> groups = const [],
   }) {
-    when(() => mockSessionDatasource.getAllSessions()).thenAnswer(
-      (_) async => sessions,
-    );
+    when(
+      () => mockSessionDatasource.getAllSessions(),
+    ).thenAnswer((_) async => sessions);
     when(() => mockSessionDatasource.getSession(any())).thenAnswer((
       invocation,
     ) async {
@@ -348,7 +348,9 @@ void main() {
       overrides: [
         sessionDatasourceProvider.overrideWithValue(mockSessionDatasource),
         inviteDatasourceProvider.overrideWithValue(mockInviteDatasource),
-        messageSubscriptionProvider.overrideWithValue(mockSessionManagerService),
+        messageSubscriptionProvider.overrideWithValue(
+          mockSessionManagerService,
+        ),
         sessionManagerServiceProvider.overrideWithValue(
           mockSessionManagerService,
         ),
@@ -365,9 +367,7 @@ void main() {
           (_) => Stream.value(ConnectivityStatus.online),
         ),
         nostrConnectionStatusProvider.overrideWith(
-          (_) => Stream.value(
-            const <String, bool>{'wss://relay.one': true},
-          ),
+          (_) => Stream.value(const <String, bool>{'wss://relay.one': true}),
         ),
         queuedMessageCountProvider.overrideWithValue(0),
       ],
@@ -720,6 +720,61 @@ void main() {
         await tester.pump();
 
         expect(find.byType(Dismissible), findsOneWidget);
+      });
+
+      testWidgets('canceling swipe delete keeps the session', (tester) async {
+        final sessions = [
+          ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex: 'abcd1234567890abcd1234567890abcd',
+            recipientName: 'Alice',
+            createdAt: DateTime.now(),
+          ),
+        ];
+
+        await tester.pumpWidget(buildChatListScreen(sessions: sessions));
+        await tester.pumpAndSettle();
+
+        await tester.drag(find.text('Alice'), const Offset(-600, 0));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Delete conversation?'), findsOneWidget);
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Alice'), findsOneWidget);
+        verifyNever(() => mockSessionDatasource.deleteSession('session-1'));
+      });
+
+      testWidgets('confirming swipe delete removes the session', (
+        tester,
+      ) async {
+        final sessions = [
+          ChatSession(
+            id: 'session-1',
+            recipientPubkeyHex: 'abcd1234567890abcd1234567890abcd',
+            recipientName: 'Alice',
+            createdAt: DateTime.now(),
+          ),
+        ];
+        when(
+          () => mockSessionDatasource.deleteSession('session-1'),
+        ).thenAnswer((_) async {});
+
+        await tester.pumpWidget(buildChatListScreen(sessions: sessions));
+        await tester.pumpAndSettle();
+
+        await tester.drag(find.text('Alice'), const Offset(-600, 0));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Delete conversation?'), findsOneWidget);
+        await tester.tap(find.text('Delete'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Alice'), findsNothing);
+        verify(
+          () => mockSessionDatasource.deleteSession('session-1'),
+        ).called(1);
       });
 
       testWidgets(
