@@ -66,6 +66,7 @@ migrate_working_dir/
 *.dylib
 *.a
 !ios/Frameworks/**/*.a
+!android/app/src/main/jniLibs/**/libndr_ffi.so
 
 # Secrets
 *.env
