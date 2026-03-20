@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:iris_chat/config/theme.dart';
 import 'package:iris_chat/config/providers/hashtree_attachment_provider.dart';
 import 'package:iris_chat/core/services/hashtree_attachment_service.dart';
 import 'package:iris_chat/core/utils/hashtree_attachments.dart';
@@ -14,6 +15,32 @@ import '../test_helpers.dart';
 
 class MockHashtreeAttachmentService extends Mock
     implements HashtreeAttachmentService {}
+
+TextStyle? effectiveStyleForLinkedText(
+  InlineSpan span,
+  String text, {
+  TextStyle? inheritedStyle,
+}) {
+  if (span is! TextSpan) return null;
+
+  final effectiveStyle = inheritedStyle?.merge(span.style) ?? span.style;
+  if (span.toPlainText() == text && span.recognizer != null) {
+    return effectiveStyle;
+  }
+
+  for (final child in span.children ?? const <InlineSpan>[]) {
+    final childStyle = effectiveStyleForLinkedText(
+      child,
+      text,
+      inheritedStyle: effectiveStyle,
+    );
+    if (childStyle != null) {
+      return childStyle;
+    }
+  }
+
+  return null;
+}
 
 void main() {
   setUpAll(() {
@@ -45,11 +72,12 @@ void main() {
     double width = 600,
     double height = 600,
     List<Override> overrides = const [],
+    ThemeData? theme,
   }) {
     return ProviderScope(
       overrides: overrides,
       child: MaterialApp(
-        theme: createTestTheme(),
+        theme: theme ?? createTestTheme(),
         home: Scaffold(
           body: SizedBox(
             width: width,
@@ -888,6 +916,37 @@ void main() {
       expect(args['url'], 'https://www.example.com');
       expect(args['useSafariVC'], isFalse);
       expect(args['useWebView'], isFalse);
+    },
+  );
+
+  testWidgets(
+    'ChatMessageBubble: outgoing links use a readable bubble contrast color',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          ChatMessageBubble(
+            message: buildMessage(
+              direction: MessageDirection.outgoing,
+              text: 'https://example.com',
+            ),
+            onReact: (_) async {},
+            onDeleteLocal: () async {},
+          ),
+          theme: AppTheme.dark,
+        ),
+      );
+
+      final richText = tester.widget<RichText>(
+        find.text('https://example.com', findRichText: true),
+      );
+      final linkStyle = effectiveStyleForLinkedText(
+        richText.text,
+        'https://example.com',
+      );
+
+      expect(linkStyle?.color, AppTheme.dark.colorScheme.onPrimaryContainer);
+      expect(linkStyle?.decoration, TextDecoration.underline);
+      expect(linkStyle?.fontWeight, FontWeight.w600);
     },
   );
 

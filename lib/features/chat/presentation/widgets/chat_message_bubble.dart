@@ -265,8 +265,15 @@ class _ChatMessageBubbleState extends ConsumerState<ChatMessageBubble> {
     }
 
     final linkStyle = baseStyle.copyWith(
-      color: theme.colorScheme.primary,
+      color: isOutgoing
+          ? theme.colorScheme.onPrimaryContainer
+          : theme.colorScheme.primary,
       decoration: TextDecoration.underline,
+      decorationColor: isOutgoing
+          ? theme.colorScheme.onPrimaryContainer
+          : theme.colorScheme.primary,
+      decorationThickness: 1.5,
+      fontWeight: FontWeight.w600,
     );
     return Text.rich(
       TextSpan(children: _buildBodyTextSpans(text, baseStyle, linkStyle)),
