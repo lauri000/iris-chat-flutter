@@ -235,9 +235,16 @@ class AppBootstrapNotifier extends StateNotifier<AppBootstrapState> {
 final appBootstrapProvider =
     StateNotifierProvider<AppBootstrapNotifier, AppBootstrapState>((ref) {
       final notifier = AppBootstrapNotifier(ref);
+      void handleAuthState(AuthState authState) {
+        if (authState.isInitialized && authState.isAuthenticated) {
+          ref.read(messageSubscriptionProvider);
+        }
+        notifier.onAuthStateChanged(authState);
+      }
+
       ref.listen<AuthState>(authStateProvider, (previous, next) {
-        notifier.onAuthStateChanged(next);
+        handleAuthState(next);
       });
-      notifier.onAuthStateChanged(ref.read(authStateProvider));
+      handleAuthState(ref.read(authStateProvider));
       return notifier;
     });
