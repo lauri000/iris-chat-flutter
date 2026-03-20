@@ -4,6 +4,7 @@ import '../../core/ffi/ndr_ffi.dart';
 import '../../core/services/error_service.dart';
 import '../../core/services/nostr_service.dart';
 import '../../core/utils/app_keys_event_fetch.dart';
+import '../../core/utils/device_labels.dart';
 import '../../features/auth/domain/repositories/auth_repository.dart';
 import 'auth_provider.dart';
 import 'nostr_provider.dart';
@@ -85,7 +86,13 @@ class DeviceManagerNotifier extends StateNotifier<DeviceManagerState> {
     );
 
     try {
-      final merged = await _loadLatestDevicesMap(ownerPubkeyHex);
+      final ownerPrivkeyHex = authState.hasOwnerKey
+          ? await _authRepository.getOwnerPrivateKey()
+          : null;
+      final merged = await _loadLatestDevices(
+        ownerPubkeyHex,
+        ownerPrivkeyHex: ownerPrivkeyHex,
+      );
       state = state.copyWith(
         isLoading: false,
         devices: _sortedDevices(merged, currentDevicePubkeyHex),
@@ -126,9 +133,19 @@ class DeviceManagerNotifier extends StateNotifier<DeviceManagerState> {
         throw Exception('Current device key not found');
       }
 
-      final merged = await _loadLatestDevicesMap(ownerPubkeyHex);
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      merged.putIfAbsent(currentDevicePubkeyHex, () => now);
+      final merged = mergeDeviceEntries(
+        existingDevices: await _loadLatestDevices(
+          ownerPubkeyHex,
+          ownerPrivkeyHex: ownerPrivkeyHex,
+        ),
+        ensuredDevices: [
+          buildCurrentDeviceEntry(
+            identityPubkeyHex: currentDevicePubkeyHex,
+            createdAt: now,
+          ),
+        ],
+      );
 
       await _publishDevices(
         ownerPubkeyHex: ownerPubkeyHex,
@@ -175,8 +192,10 @@ class DeviceManagerNotifier extends StateNotifier<DeviceManagerState> {
         throw Exception('Private key not found');
       }
 
-      final merged = await _loadLatestDevicesMap(ownerPubkeyHex);
-      merged.remove(target);
+      final merged = (await _loadLatestDevices(
+        ownerPubkeyHex,
+        ownerPrivkeyHex: ownerPrivkeyHex,
+      )).where((device) => device.identityPubkeyHex != target).toList();
 
       await _publishDevices(
         ownerPubkeyHex: ownerPubkeyHex,
@@ -197,76 +216,65 @@ class DeviceManagerNotifier extends StateNotifier<DeviceManagerState> {
     }
   }
 
-  Future<Map<String, int>> _loadLatestDevicesMap(String ownerPubkeyHex) async {
-    final fromState = <String, int>{
-      for (final device in state.devices)
-        _normalizeHex(device.identityPubkeyHex) ?? device.identityPubkeyHex:
-            device.createdAt,
-    };
+  void mergeKnownDevices(
+    Iterable<FfiDeviceEntry> devices, {
+    String? currentDevicePubkeyHex,
+  }) {
+    final resolvedCurrent =
+        _normalizeHex(currentDevicePubkeyHex) ?? state.currentDevicePubkeyHex;
+    final merged = mergeDeviceEntries(
+      existingDevices: state.devices,
+      ensuredDevices: devices,
+    );
+    state = state.copyWith(
+      devices: _sortedDevices(merged, resolvedCurrent),
+      currentDevicePubkeyHex: resolvedCurrent,
+      clearError: true,
+    );
+  }
 
+  Future<List<FfiDeviceEntry>> _loadLatestDevices(
+    String ownerPubkeyHex, {
+    String? ownerPrivkeyHex,
+  }) async {
+    final fromState = state.devices.map(normalizeDeviceEntry).toList();
     final latestDevices = await fetchLatestAppKeysDevices(
       _nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
+      ownerPrivkeyHex: ownerPrivkeyHex,
       subscriptionLabel: 'appkeys-settings',
     );
     if (latestDevices.isEmpty) return fromState;
-
-    final merged = <String, int>{};
-    for (final device in latestDevices) {
-      final key = _normalizeHex(device.identityPubkeyHex);
-      if (key == null) continue;
-      merged[key] = device.createdAt;
-    }
-
-    return merged.isEmpty ? fromState : merged;
+    return latestDevices.map(normalizeDeviceEntry).toList();
   }
 
   Future<void> _publishDevices({
     required String ownerPubkeyHex,
     required String ownerPrivkeyHex,
-    required Map<String, int> devices,
+    required List<FfiDeviceEntry> devices,
   }) async {
     final eventJson = await NdrFfi.createSignedAppKeysEvent(
       ownerPubkeyHex: ownerPubkeyHex,
       ownerPrivkeyHex: ownerPrivkeyHex,
-      devices: devices.entries
-          .map(
-            (entry) => FfiDeviceEntry(
-              identityPubkeyHex: entry.key,
-              createdAt: entry.value,
-            ),
-          )
-          .toList(),
+      devices: devices,
     );
     await _nostrService.publishEvent(eventJson);
   }
 
   List<FfiDeviceEntry> _sortedDevices(
-    Map<String, int> deviceMap,
+    List<FfiDeviceEntry> devices,
     String? currentDevicePubkeyHex,
   ) {
-    final current = _normalizeHex(currentDevicePubkeyHex);
-    final devices = deviceMap.entries
-        .map(
-          (entry) => FfiDeviceEntry(
-            identityPubkeyHex: entry.key,
-            createdAt: entry.value,
-          ),
-        )
-        .toList();
+    final sorted = devices.map(normalizeDeviceEntry).toList();
 
-    devices.sort((a, b) {
-      final aCurrent = current != null && a.identityPubkeyHex == current;
-      final bCurrent = current != null && b.identityPubkeyHex == current;
-      if (aCurrent != bCurrent) return aCurrent ? -1 : 1;
-
+    sorted.sort((a, b) {
       if (a.createdAt != b.createdAt) {
         return b.createdAt.compareTo(a.createdAt);
       }
       return a.identityPubkeyHex.compareTo(b.identityPubkeyHex);
     });
 
-    return devices;
+    return sorted;
   }
 
   String? _normalizeHex(String? value) {

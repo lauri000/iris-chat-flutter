@@ -77,7 +77,9 @@ class NostrService {
   }
 
   Future<void> _connectToRelay(String url) async {
-    if (_disposed || _connections.containsKey(url) || _connectingRelays.contains(url)) {
+    if (_disposed ||
+        _connections.containsKey(url) ||
+        _connectingRelays.contains(url)) {
       return;
     }
 
@@ -174,14 +176,18 @@ class NostrService {
             final accepted = message[2] as bool;
             final reason = message.length > 3 ? message[3] as String? : null;
 
+            final data = <String, Object>{
+              'relay': relay,
+              'eventId': eventId.substring(0, 8),
+            };
+            if (reason != null) {
+              data['reason'] = reason;
+            }
+
             Logger.debug(
               'Event ${accepted ? "accepted" : "rejected"}',
               category: LogCategory.nostr,
-              data: {
-                'relay': relay,
-                'eventId': eventId.substring(0, 8),
-                'reason': ?reason,
-              },
+              data: data,
             );
           }
           break;

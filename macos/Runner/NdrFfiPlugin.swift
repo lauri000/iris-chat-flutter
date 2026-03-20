@@ -195,7 +195,14 @@ public class NdrFfiPlugin: NSObject, FlutterPlugin {
         let devices: [FfiDeviceEntry] = deviceMaps.compactMap { m in
             guard let identity = m["identityPubkeyHex"] as? String else { return nil }
             let createdAt = (m["createdAt"] as? NSNumber)?.uint64Value ?? 0
-            return FfiDeviceEntry(identityPubkeyHex: identity, createdAt: createdAt)
+            let deviceLabel = m["deviceLabel"] as? String
+            let clientLabel = m["clientLabel"] as? String
+            return FfiDeviceEntry(
+                identityPubkeyHex: identity,
+                createdAt: createdAt,
+                deviceLabel: deviceLabel,
+                clientLabel: clientLabel
+            )
         }
 
         result(try createSignedAppKeysEvent(
@@ -210,11 +217,19 @@ public class NdrFfiPlugin: NSObject, FlutterPlugin {
               let eventJson = args["eventJson"] as? String else {
             throw PluginError.invalidArguments("Missing eventJson")
         }
+        let ownerPrivkeyHex = args["ownerPrivkeyHex"] as? String
 
-        let devices = try parseAppKeysEvent(eventJson: eventJson).map { d in
+        let devices = try parseAppKeysEvent(
+            eventJson: eventJson,
+            ownerPrivkeyHex: ownerPrivkeyHex
+        ).map { d -> [String: Any] in
+            let deviceLabel: Any = d.deviceLabel ?? NSNull()
+            let clientLabel: Any = d.clientLabel ?? NSNull()
             return [
                 "identityPubkeyHex": d.identityPubkeyHex,
                 "createdAt": d.createdAt,
+                "deviceLabel": deviceLabel,
+                "clientLabel": clientLabel,
             ]
         }
         result(devices)
@@ -225,11 +240,19 @@ public class NdrFfiPlugin: NSObject, FlutterPlugin {
               let eventJsons = args["eventJsons"] as? [String] else {
             throw PluginError.invalidArguments("Missing eventJsons")
         }
+        let ownerPrivkeyHex = args["ownerPrivkeyHex"] as? String
 
-        let devices = try resolveLatestAppKeysDevices(eventJsons: eventJsons).map { d in
+        let devices = try resolveLatestAppKeysDevices(
+            eventJsons: eventJsons,
+            ownerPrivkeyHex: ownerPrivkeyHex
+        ).map { d -> [String: Any] in
+            let deviceLabel: Any = d.deviceLabel ?? NSNull()
+            let clientLabel: Any = d.clientLabel ?? NSNull()
             return [
                 "identityPubkeyHex": d.identityPubkeyHex,
                 "createdAt": d.createdAt,
+                "deviceLabel": deviceLabel,
+                "clientLabel": clientLabel,
             ]
         }
         result(devices)

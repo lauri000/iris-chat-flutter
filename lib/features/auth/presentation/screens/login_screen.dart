@@ -10,6 +10,7 @@ import '../../../../config/providers/auth_provider.dart';
 import '../../../../config/providers/chat_provider.dart';
 import '../../../../config/providers/invite_provider.dart';
 import '../../../../config/providers/login_device_registration_provider.dart';
+import '../../../../core/utils/device_labels.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -283,7 +284,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         const SizedBox(height: 8),
                         ...preview.existingDevices.map(
                           (device) => _DeviceListRow(
-                            label: _deviceLabel(device.identityPubkeyHex),
+                            label: deviceDisplayTitle(device),
+                            subtitle: deviceDisplaySubtitle(device),
                           ),
                         ),
                       ],
@@ -295,7 +297,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       const SizedBox(height: 8),
                       ...preview.devicesIfRegistered.map(
                         (device) => _DeviceListRow(
-                          label: _deviceLabel(device.identityPubkeyHex),
+                          label: deviceDisplayTitle(device),
+                          subtitle: deviceDisplaySubtitle(device),
                           isCurrentDevice:
                               device.identityPubkeyHex ==
                               preview.currentDevicePubkeyHex,
@@ -352,12 +355,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final count = preview.existingDevices.length;
     final noun = count == 1 ? 'device' : 'devices';
     return Text('Found $count previously active $noun on your relays.');
-  }
-
-  String _deviceLabel(String pubkeyHex) {
-    final normalized = pubkeyHex.trim();
-    if (normalized.length <= 20) return normalized;
-    return '${normalized.substring(0, 12)}...${normalized.substring(normalized.length - 8)}';
   }
 
   @override
@@ -490,9 +487,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 }
 
 class _DeviceListRow extends StatelessWidget {
-  const _DeviceListRow({required this.label, this.isCurrentDevice = false});
+  const _DeviceListRow({
+    required this.label,
+    this.subtitle,
+    this.isCurrentDevice = false,
+  });
 
   final String label;
+  final String? subtitle;
   final bool isCurrentDevice;
 
   @override
@@ -508,7 +510,14 @@ class _DeviceListRow extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(isCurrentDevice ? '$label (This device)' : label),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(isCurrentDevice ? '$label (This device)' : label),
+                if (subtitle != null)
+                  Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
           ),
         ],
       ),

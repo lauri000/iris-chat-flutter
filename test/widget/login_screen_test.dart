@@ -79,6 +79,8 @@ LoginDeviceRegistrationPreview _buildPreview({
         FfiDeviceEntry(
           identityPubkeyHex: existingDevicePubkeyHex,
           createdAt: 1700000000,
+          deviceLabel: 'Linked iPhone',
+          clientLabel: 'Iris Chat Mobile',
         ),
       ];
 
@@ -93,6 +95,8 @@ LoginDeviceRegistrationPreview _buildPreview({
       const FfiDeviceEntry(
         identityPubkeyHex: generatedDevicePubkeyHex,
         createdAt: 1700000001,
+        deviceLabel: 'Sirius MacBook',
+        clientLabel: 'Iris Chat Desktop',
       ),
     ],
     deviceListLoaded: deviceListLoaded,
@@ -584,6 +588,8 @@ void main() {
           find.text('Active devices after registering this one'),
           findsWidgets,
         );
+        expect(find.text('Linked iPhone'), findsWidgets);
+        expect(find.textContaining('Sirius MacBook'), findsWidgets);
         expect(find.text('Chats Screen'), findsNothing);
         verify(
           () => mockLoginDeviceRegistrationService

@@ -78,17 +78,20 @@ Future<List<NostrEvent>> fetchAppKeysEvents(
 }
 
 Future<List<FfiDeviceEntry>> resolveLatestAppKeysDevicesFromEvents(
-  List<NostrEvent> events,
-) async {
+  List<NostrEvent> events, {
+  String? ownerPrivkeyHex,
+}) async {
   if (events.isEmpty) return const <FfiDeviceEntry>[];
   return NdrFfi.resolveLatestAppKeysDevices(
     events.map((event) => jsonEncode(event.toJson())).toList(),
+    ownerPrivkeyHex: ownerPrivkeyHex,
   );
 }
 
 Future<List<FfiDeviceEntry>> fetchLatestAppKeysDevices(
   NostrService nostrService, {
   required String ownerPubkeyHex,
+  String? ownerPrivkeyHex,
   Duration timeout = const Duration(seconds: 2),
   String subscriptionLabel = 'appkeys-fetch',
 }) async {
@@ -98,5 +101,8 @@ Future<List<FfiDeviceEntry>> fetchLatestAppKeysDevices(
     timeout: timeout,
     subscriptionLabel: subscriptionLabel,
   );
-  return resolveLatestAppKeysDevicesFromEvents(events);
+  return resolveLatestAppKeysDevicesFromEvents(
+    events,
+    ownerPrivkeyHex: ownerPrivkeyHex,
+  );
 }

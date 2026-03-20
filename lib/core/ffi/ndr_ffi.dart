@@ -209,11 +209,14 @@ class NdrFfi {
 
   /// Parse a signed AppKeys event JSON into device entries.
   static Future<List<FfiDeviceEntry>> parseAppKeysEvent(
-    String eventJson,
-  ) async {
-    final result = await _channel.invokeMethod<List>('parseAppKeysEvent', {
-      'eventJson': eventJson,
-    });
+    String eventJson, {
+    String? ownerPrivkeyHex,
+  }) async {
+    final args = <String, dynamic>{'eventJson': eventJson};
+    if (ownerPrivkeyHex != null) {
+      args['ownerPrivkeyHex'] = ownerPrivkeyHex;
+    }
+    final result = await _channel.invokeMethod<List>('parseAppKeysEvent', args);
     if (result == null) return [];
     return result
         .map((e) => FfiDeviceEntry.fromMap(Map<String, dynamic>.from(e as Map)))
@@ -222,11 +225,16 @@ class NdrFfi {
 
   /// Resolve the latest authorized device list from a set of AppKeys events.
   static Future<List<FfiDeviceEntry>> resolveLatestAppKeysDevices(
-    List<String> eventJsons,
-  ) async {
+    List<String> eventJsons, {
+    String? ownerPrivkeyHex,
+  }) async {
+    final args = <String, dynamic>{'eventJsons': eventJsons};
+    if (ownerPrivkeyHex != null) {
+      args['ownerPrivkeyHex'] = ownerPrivkeyHex;
+    }
     final result = await _channel.invokeMethod<List>(
       'resolveLatestAppKeysDevices',
-      {'eventJsons': eventJsons},
+      args,
     );
     if (result == null) return [];
     return result
@@ -300,13 +308,18 @@ class NdrFfi {
     final method = storagePath == null
         ? 'sessionManagerNew'
         : 'sessionManagerNewWithStoragePath';
-    final result = await _channel.invokeMethod<Map>(method, {
+    final args = <String, dynamic>{
       'ourPubkeyHex': ourPubkeyHex,
       'ourIdentityPrivkeyHex': ourIdentityPrivkeyHex,
       'deviceId': deviceId,
-      'ownerPubkeyHex': ?ownerPubkeyHex,
-      'storagePath': ?storagePath,
-    });
+    };
+    if (ownerPubkeyHex != null) {
+      args['ownerPubkeyHex'] = ownerPubkeyHex;
+    }
+    if (storagePath != null) {
+      args['storagePath'] = storagePath;
+    }
+    final result = await _channel.invokeMethod<Map>(method, args);
     if (result == null) {
       throw NdrException.sessionNotReady('Failed to create session manager');
     }

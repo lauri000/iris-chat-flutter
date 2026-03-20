@@ -966,19 +966,23 @@ void main() {
             devicePubkeyHex: '3333',
             deviceManagerState: const DeviceManagerState(
               isLoading: false,
-              currentDevicePubkeyHex: '3333',
-              devices: [
-                FfiDeviceEntry(
-                  identityPubkeyHex: '2222',
-                  createdAt: 1700000000,
-                ),
-                FfiDeviceEntry(
-                  identityPubkeyHex: '3333',
-                  createdAt: 1700001000,
-                ),
-              ],
+                currentDevicePubkeyHex: '3333',
+                devices: [
+                  FfiDeviceEntry(
+                    identityPubkeyHex: '2222',
+                    createdAt: 1700000000,
+                    deviceLabel: 'Linked iPhone',
+                    clientLabel: 'Iris Chat Mobile',
+                  ),
+                  FfiDeviceEntry(
+                    identityPubkeyHex: '3333',
+                    createdAt: 1700001000,
+                    deviceLabel: 'Sirius MacBook',
+                    clientLabel: 'Iris Chat Desktop',
+                  ),
+                ],
+              ),
             ),
-          ),
         );
         await tester.pumpAndSettle();
 
@@ -990,10 +994,53 @@ void main() {
           findsOneWidget,
         );
         expect(find.textContaining('This device'), findsWidgets);
+        expect(find.text('Sirius MacBook'), findsOneWidget);
+        expect(find.text('Linked iPhone'), findsOneWidget);
         expect(find.byTooltip('Delete device'), findsNothing);
         expect(find.byTooltip('Remove this device'), findsNothing);
         expect(find.text('Register This Device'), findsNothing);
       });
+
+      testWidgets(
+        'sorts registered devices by linked date instead of pinning current device first',
+        (tester) async {
+          await tester.pumpWidget(
+            buildSettingsScreen(
+              pubkeyHex: testPubkeyHex,
+              devicePubkeyHex: 'bbbb',
+              deviceManagerState: const DeviceManagerState(
+                isLoading: false,
+                currentDevicePubkeyHex: 'bbbb',
+                devices: [
+                  FfiDeviceEntry(
+                    identityPubkeyHex: 'bbbb',
+                    createdAt: 1700000000,
+                    deviceLabel: 'Current device',
+                  ),
+                  FfiDeviceEntry(
+                    identityPubkeyHex: 'aaaa',
+                    createdAt: 1700001000,
+                    deviceLabel: 'Middle device',
+                  ),
+                  FfiDeviceEntry(
+                    identityPubkeyHex: 'cccc',
+                    createdAt: 1700002000,
+                    deviceLabel: 'Newest device',
+                  ),
+                ],
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          final newestY = tester.getTopLeft(find.text('Newest device')).dy;
+          final middleY = tester.getTopLeft(find.text('Middle device')).dy;
+          final currentY = tester.getTopLeft(find.text('Current device')).dy;
+
+          expect(newestY, lessThan(middleY));
+          expect(middleY, lessThan(currentY));
+        },
+      );
 
       testWidgets('shows unregistered linked-device copy', (tester) async {
         await tester.pumpWidget(

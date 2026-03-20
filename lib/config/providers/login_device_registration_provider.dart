@@ -6,6 +6,7 @@ import 'package:nostr/nostr.dart' as nostr;
 import '../../core/ffi/ndr_ffi.dart';
 import '../../core/services/nostr_service.dart';
 import '../../core/utils/app_keys_event_fetch.dart';
+import '../../core/utils/device_labels.dart';
 import '../../features/auth/domain/models/identity.dart';
 import 'nostr_provider.dart';
 
@@ -85,31 +86,38 @@ class LoginDeviceRegistrationServiceImpl
         .trim()
         .toLowerCase();
 
-    Map<String, int> existingMap = <String, int>{};
+    List<FfiDeviceEntry> existingDevices = const <FfiDeviceEntry>[];
     String? loadError;
     var loaded = false;
 
     try {
-      existingMap = await _loadLatestDevicesMap(ownerPubkeyHex);
+      existingDevices = await _loadLatestDevices(
+        ownerPubkeyHex,
+        ownerPrivkeyHex: ownerPrivkeyHex,
+      );
       loaded = true;
     } catch (e) {
       loadError = e.toString();
     }
 
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final withCurrent = <String, int>{...existingMap};
-    withCurrent.putIfAbsent(currentDevicePubkeyHex, () => now);
-
-    final existing = _sortedDevices(existingMap, currentDevicePubkeyHex);
-    final projected = _sortedDevices(withCurrent, currentDevicePubkeyHex);
+    final projected = mergeDeviceEntries(
+      existingDevices: existingDevices,
+      ensuredDevices: [
+        buildCurrentDeviceEntry(
+          identityPubkeyHex: currentDevicePubkeyHex,
+          createdAt: now,
+        ),
+      ],
+    );
 
     return LoginDeviceRegistrationPreview(
       ownerPubkeyHex: ownerPubkeyHex,
       ownerPrivkeyHex: ownerPrivkeyHex,
       currentDevicePrivkeyHex: currentDevicePrivkeyHex,
       currentDevicePubkeyHex: currentDevicePubkeyHex,
-      existingDevices: existing,
-      devicesIfRegistered: projected,
+      existingDevices: _sortedDevices(existingDevices, currentDevicePubkeyHex),
+      devicesIfRegistered: _sortedDevices(projected, currentDevicePubkeyHex),
       deviceListLoaded: loaded,
       deviceListLoadError: loadError,
     );
@@ -140,7 +148,10 @@ class LoginDeviceRegistrationServiceImpl
       ownerPubkeyHex: ownerPubkeyHex,
       ownerPrivkeyHex: ownerPrivkeyHex,
       devices: [
-        FfiDeviceEntry(identityPubkeyHex: devicePubkeyHex, createdAt: now),
+        buildCurrentDeviceEntry(
+          identityPubkeyHex: devicePubkeyHex,
+          createdAt: now,
+        ),
       ],
     );
   }
@@ -151,11 +162,18 @@ class LoginDeviceRegistrationServiceImpl
     required String ownerPrivkeyHex,
     required String devicePubkeyHex,
   }) async {
-    final merged = await _loadLatestDevicesMap(ownerPubkeyHex);
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    merged.putIfAbsent(
-      _normalizeHex(devicePubkeyHex) ?? devicePubkeyHex,
-      () => now,
+    final merged = mergeDeviceEntries(
+      existingDevices: await _loadLatestDevices(
+        ownerPubkeyHex,
+        ownerPrivkeyHex: ownerPrivkeyHex,
+      ),
+      ensuredDevices: [
+        buildCurrentDeviceEntry(
+          identityPubkeyHex: devicePubkeyHex,
+          createdAt: now,
+        ),
+      ],
     );
 
     await publishDeviceList(
@@ -165,48 +183,32 @@ class LoginDeviceRegistrationServiceImpl
     );
   }
 
-  Future<Map<String, int>> _loadLatestDevicesMap(String ownerPubkeyHex) async {
+  Future<List<FfiDeviceEntry>> _loadLatestDevices(
+    String ownerPubkeyHex, {
+    String? ownerPrivkeyHex,
+  }) async {
     final latestDevices = await fetchLatestAppKeysDevices(
       _nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
+      ownerPrivkeyHex: ownerPrivkeyHex,
       subscriptionLabel: 'appkeys-login',
     );
-    if (latestDevices.isEmpty) return <String, int>{};
-
-    final merged = <String, int>{};
-    for (final device in latestDevices) {
-      final key = _normalizeHex(device.identityPubkeyHex);
-      if (key == null) continue;
-      merged[key] = device.createdAt;
-    }
-    return merged;
+    return latestDevices.map(normalizeDeviceEntry).toList();
   }
 
   List<FfiDeviceEntry> _sortedDevices(
-    Map<String, int> deviceMap,
+    List<FfiDeviceEntry> devices,
     String currentDevicePubkeyHex,
   ) {
-    final current = _normalizeHex(currentDevicePubkeyHex);
-    final devices = deviceMap.entries
-        .map(
-          (entry) => FfiDeviceEntry(
-            identityPubkeyHex: entry.key,
-            createdAt: entry.value,
-          ),
-        )
-        .toList();
+    final sorted = devices.map(normalizeDeviceEntry).toList();
 
-    devices.sort((a, b) {
-      final aCurrent = current != null && a.identityPubkeyHex == current;
-      final bCurrent = current != null && b.identityPubkeyHex == current;
-      if (aCurrent != bCurrent) return aCurrent ? -1 : 1;
-
+    sorted.sort((a, b) {
       if (a.createdAt != b.createdAt) {
         return b.createdAt.compareTo(a.createdAt);
       }
       return a.identityPubkeyHex.compareTo(b.identityPubkeyHex);
     });
-    return devices;
+    return sorted;
   }
 
   String _normalizePrivateKeyNsec(String input) {
@@ -243,12 +245,6 @@ class LoginDeviceRegistrationServiceImpl
   bool _isValidPrivateKey(String hex) {
     if (hex.length != 64) return false;
     return RegExp(r'^[0-9a-fA-F]+$').hasMatch(hex);
-  }
-
-  String? _normalizeHex(String? value) {
-    final normalized = value?.trim().toLowerCase();
-    if (normalized == null || normalized.isEmpty) return null;
-    return normalized;
   }
 }
 

@@ -23,6 +23,7 @@ import '../../../../config/providers/startup_launch_provider.dart';
 import '../../../../core/services/imgproxy_service.dart';
 import '../../../../core/services/nostr_relay_settings_service.dart';
 import '../../../../core/services/profile_service.dart';
+import '../../../../core/utils/device_labels.dart';
 import '../../../../shared/utils/formatters.dart';
 import '../../../../shared/widgets/image_viewer_modal.dart';
 import '../../../chat/presentation/widgets/chats_back_button.dart';
@@ -43,6 +44,13 @@ class SettingsScreen extends ConsumerWidget {
     final relayConnectionStatus =
         ref.watch(nostrConnectionStatusProvider).valueOrNull ??
         const <String, bool>{};
+    final sortedDevices = [...deviceState.devices]
+      ..sort((a, b) {
+        if (a.createdAt != b.createdAt) {
+          return b.createdAt.compareTo(a.createdAt);
+        }
+        return a.identityPubkeyHex.compareTo(b.identityPubkeyHex);
+      });
     final desktopNotificationsSupported = ref.watch(
       desktopNotificationsSupportedProvider,
     );
@@ -186,24 +194,25 @@ class SettingsScreen extends ConsumerWidget {
                     : 'Registered devices will appear here in read-only mode',
               ),
             ),
-          ...deviceState.devices.map((device) {
+          ...sortedDevices.map((device) {
             final isCurrent =
                 device.identityPubkeyHex == deviceState.currentDevicePubkeyHex;
             final addedAt = DateTime.fromMillisecondsSinceEpoch(
               device.createdAt * 1000,
             );
+            final detail = deviceDisplaySubtitle(device);
+            final subtitleParts = <String>[];
+            if (isCurrent) {
+              subtitleParts.add('This device');
+            }
+            if (detail != null) {
+              subtitleParts.add(detail);
+            }
+            subtitleParts.add('Added ${formatDate(addedAt)}');
             return ListTile(
               leading: const Icon(Icons.computer),
-              title: Text(
-                formatPubkeyForDisplay(
-                  formatPubkeyAsNpub(device.identityPubkeyHex),
-                ),
-              ),
-              subtitle: Text(
-                isCurrent
-                    ? 'This device • Added ${formatDate(addedAt)}'
-                    : 'Added ${formatDate(addedAt)}',
-              ),
+              title: Text(deviceDisplayTitle(device)),
+              subtitle: Text(subtitleParts.join(' • ')),
               trailing: canManageDevices
                   ? IconButton(
                       icon: const Icon(Icons.delete_outline),

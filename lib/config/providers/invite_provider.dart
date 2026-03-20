@@ -11,6 +11,7 @@ import '../../core/services/error_service.dart';
 import '../../core/services/logger_service.dart';
 import '../../core/services/nostr_service.dart';
 import '../../core/utils/app_keys_event_fetch.dart';
+import '../../core/utils/device_labels.dart';
 import '../../core/utils/invite_response_subscription.dart';
 import '../../core/utils/invite_url.dart';
 import '../../features/chat/domain/models/session.dart';
@@ -468,10 +469,20 @@ class InviteNotifier extends StateNotifier<InviteState> {
       final linkedDevicePubkeyHex = acceptResult.inviterDevicePubkeyHex;
 
       // Publish updated AppKeys authorizing the new device.
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       await _publishMergedAppKeys(
         ownerPubkeyHex: ownerPubkeyHex,
         ownerPrivkeyHex: ownerPrivkeyHex,
-        devicePubkeysToEnsure: {devicePubkeyHex, linkedDevicePubkeyHex},
+        deviceEntriesToEnsure: [
+          buildCurrentDeviceEntry(
+            identityPubkeyHex: devicePubkeyHex,
+            createdAt: now,
+          ),
+          buildLinkedDeviceEntry(
+            identityPubkeyHex: linkedDevicePubkeyHex,
+            createdAt: now,
+          ),
+        ],
       );
 
       // Re-bootstrap the owner's own device graph now that AppKeys includes the
@@ -812,7 +823,7 @@ class InviteNotifier extends StateNotifier<InviteState> {
   Future<void> _publishMergedAppKeys({
     required String ownerPubkeyHex,
     required String ownerPrivkeyHex,
-    required Set<String> devicePubkeysToEnsure,
+    required List<FfiDeviceEntry> deviceEntriesToEnsure,
   }) async {
     final nostrService = _ref.read(nostrServiceProvider);
     final localDevices = _ref.read(deviceManagerProvider).devices;
@@ -820,25 +831,19 @@ class InviteNotifier extends StateNotifier<InviteState> {
     final relayDevices = await _fetchLatestAppKeysDevicesWithRetry(
       nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
+      ownerPrivkeyHex: ownerPrivkeyHex,
       retry: localDevices.isEmpty,
     );
 
-    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    final devices = buildMergedDeviceMap(
-      localDevices: localDevices,
-      relayDevices: relayDevices,
-      ensurePubkeys: devicePubkeysToEnsure,
-      nowSeconds: now,
+    final devices = mergeDeviceEntries(
+      existingDevices: [...localDevices, ...relayDevices],
+      ensuredDevices: deviceEntriesToEnsure,
     );
 
     final eventJson = await NdrFfi.createSignedAppKeysEvent(
       ownerPubkeyHex: ownerPubkeyHex,
       ownerPrivkeyHex: ownerPrivkeyHex,
-      devices: devices.entries
-          .map(
-            (e) => FfiDeviceEntry(identityPubkeyHex: e.key, createdAt: e.value),
-          )
-          .toList(),
+      devices: devices,
     );
 
     await nostrService.publishEvent(eventJson);
@@ -847,11 +852,13 @@ class InviteNotifier extends StateNotifier<InviteState> {
   Future<List<FfiDeviceEntry>> _fetchLatestAppKeysDevices(
     NostrService nostrService, {
     required String ownerPubkeyHex,
+    String? ownerPrivkeyHex,
     Duration timeout = const Duration(seconds: 2),
   }) async {
     return fetchLatestAppKeysDevices(
       nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
+      ownerPrivkeyHex: ownerPrivkeyHex,
       timeout: timeout,
       subscriptionLabel: 'appkeys-fetch',
     );
@@ -860,11 +867,13 @@ class InviteNotifier extends StateNotifier<InviteState> {
   Future<List<FfiDeviceEntry>> _fetchLatestAppKeysDevicesWithRetry(
     NostrService nostrService, {
     required String ownerPubkeyHex,
+    String? ownerPrivkeyHex,
     required bool retry,
   }) async {
     final first = await _fetchLatestAppKeysDevices(
       nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
+      ownerPrivkeyHex: ownerPrivkeyHex,
       timeout: retry ? const Duration(seconds: 1) : const Duration(seconds: 2),
     );
     if (first.isNotEmpty || !retry) return first;
@@ -873,6 +882,7 @@ class InviteNotifier extends StateNotifier<InviteState> {
     return _fetchLatestAppKeysDevices(
       nostrService,
       ownerPubkeyHex: ownerPubkeyHex,
+      ownerPrivkeyHex: ownerPrivkeyHex,
       timeout: const Duration(seconds: 1),
     );
   }

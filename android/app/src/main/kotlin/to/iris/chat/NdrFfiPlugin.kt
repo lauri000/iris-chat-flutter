@@ -153,7 +153,9 @@ class NdrFfiPlugin : FlutterPlugin, MethodCallHandler {
             val map = entry as? Map<String, Any?> ?: return@mapNotNull null
             val identity = map["identityPubkeyHex"] as? String ?: return@mapNotNull null
             val createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L
-            FfiDeviceEntry(identity, createdAt.toULong())
+            val deviceLabel = map["deviceLabel"] as? String
+            val clientLabel = map["clientLabel"] as? String
+            FfiDeviceEntry(identity, createdAt.toULong(), deviceLabel, clientLabel)
         }
 
         val eventJson = createSignedAppKeysEvent(ownerPubkeyHex, ownerPrivkeyHex, devices)
@@ -163,11 +165,14 @@ class NdrFfiPlugin : FlutterPlugin, MethodCallHandler {
     private fun handleParseAppKeysEvent(call: MethodCall, result: Result) {
         val eventJson = call.argument<String>("eventJson")
             ?: throw IllegalArgumentException("Missing eventJson")
+        val ownerPrivkeyHex = call.argument<String>("ownerPrivkeyHex")
 
-        val devices = parseAppKeysEvent(eventJson).map { d ->
+        val devices = parseAppKeysEvent(eventJson, ownerPrivkeyHex).map { d ->
             mapOf(
                 "identityPubkeyHex" to d.identityPubkeyHex,
                 "createdAt" to d.createdAt.toLong(),
+                "deviceLabel" to d.deviceLabel,
+                "clientLabel" to d.clientLabel,
             )
         }
         result.success(devices)
@@ -176,11 +181,14 @@ class NdrFfiPlugin : FlutterPlugin, MethodCallHandler {
     private fun handleResolveLatestAppKeysDevices(call: MethodCall, result: Result) {
         val eventJsons = call.argument<List<String>>("eventJsons")
             ?: throw IllegalArgumentException("Missing eventJsons")
+        val ownerPrivkeyHex = call.argument<String>("ownerPrivkeyHex")
 
-        val devices = resolveLatestAppKeysDevices(eventJsons).map { d ->
+        val devices = resolveLatestAppKeysDevices(eventJsons, ownerPrivkeyHex).map { d ->
             mapOf(
                 "identityPubkeyHex" to d.identityPubkeyHex,
                 "createdAt" to d.createdAt.toLong(),
+                "deviceLabel" to d.deviceLabel,
+                "clientLabel" to d.clientLabel,
             )
         }
         result.success(devices)
