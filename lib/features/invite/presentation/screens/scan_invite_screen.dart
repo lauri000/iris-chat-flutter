@@ -194,17 +194,83 @@ class _ScanInviteScreenState extends ConsumerState<ScanInviteScreen> {
   }
 
   Widget _buildScanner(ThemeData theme) {
-    return Stack(
-      children: [
-        MobileScanner(controller: _scannerController, onDetect: _onDetect),
-        // Overlay with cutout
-        CustomPaint(
-          painter: _ScannerOverlayPainter(
-            borderColor: theme.colorScheme.primary,
+    return ValueListenableBuilder<MobileScannerState>(
+      valueListenable: _scannerController,
+      builder: (context, state, _) {
+        final hasError = state.error != null;
+
+        return Stack(
+          children: [
+            MobileScanner(
+              controller: _scannerController,
+              onDetect: _onDetect,
+              errorBuilder: (context, error) =>
+                  _buildScannerError(theme, error),
+            ),
+            if (!hasError)
+              CustomPaint(
+                painter: _ScannerOverlayPainter(
+                  borderColor: theme.colorScheme.primary,
+                ),
+                child: const SizedBox.expand(),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildScannerError(ThemeData theme, MobileScannerException error) {
+    final isPermissionDenied =
+        error.errorCode == MobileScannerErrorCode.permissionDenied;
+    final title = isPermissionDenied
+        ? 'Camera access is blocked'
+        : 'Unable to start camera';
+    final message = isPermissionDenied
+        ? 'Allow camera access in system settings to scan a QR code, or use Paste instead.'
+        : error.errorDetails?.message ?? error.errorCode.message;
+
+    return ColoredBox(
+      color: theme.colorScheme.surface,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isPermissionDenied
+                      ? Icons.camera_alt_outlined
+                      : Icons.error_outline,
+                  size: 40,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  style: theme.textTheme.titleMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => setState(() => _showPasteInput = true),
+                  child: const Text('Paste Link Instead'),
+                ),
+              ],
+            ),
           ),
-          child: const SizedBox.expand(),
         ),
-      ],
+      ),
     );
   }
 
