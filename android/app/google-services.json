@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "375748982628",
+    "firebase_url": "https://iris-99003.firebaseio.com",
+    "project_id": "iris-99003",
+    "storage_bucket": "iris-99003.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:375748982628:android:ac90427767abdcfbd82c71",
+        "android_client_info": {
+          "package_name": "to.iris.Iris"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDna-1D11qiDFZv_hiqY4LgutrEQ1ggpSw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:375748982628:android:4187a05b451d78e1d82c71",
+        "android_client_info": {
+          "package_name": "to.iris.chat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDna-1D11qiDFZv_hiqY4LgutrEQ1ggpSw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
