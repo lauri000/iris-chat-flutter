@@ -83,11 +83,30 @@ void main() {
   const ownerPubkey =
       '2222222222222222222222222222222222222222222222222222222222222222';
   const fcmToken = 'fcm-token-123';
+  const apnsToken = 'apns-token-123';
   const apiBase = 'https://notifications.iris.to';
 
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('MobilePushSubscriptionServiceImpl', () {
+    test('uses sandbox notification server for non-release mobile builds', () {
+      expect(
+        resolveMobilePushServerUrl(platformKey: 'ios', isReleaseMode: false),
+        'https://notifications-sandbox.iris.to',
+      );
+      expect(
+        resolveMobilePushServerUrl(
+          platformKey: 'android',
+          isReleaseMode: false,
+        ),
+        'https://notifications-sandbox.iris.to',
+      );
+      expect(
+        resolveMobilePushServerUrl(platformKey: 'ios', isReleaseMode: true),
+        apiBase,
+      );
+    });
+
     test(
       'creates subscription with NIP-98 auth when enabling on Android',
       () async {
@@ -264,6 +283,42 @@ void main() {
 
       await service.sync(enabled: true, ownerPubkeyHex: ownerPubkey);
       expect(calls, 0);
+    });
+
+    test('creates subscription with APNS token only on iOS', () async {
+      SharedPreferences.setMockInitialValues({});
+      late Map<String, dynamic> postedBody;
+
+      final client = MockClient((request) async {
+        if (request.method == 'GET' && request.url.path == '/subscriptions') {
+          return http.Response('{}', 200);
+        }
+        if (request.method == 'POST' && request.url.path == '/subscriptions') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response('{"id":"sub-ios"}', 201);
+        }
+        return http.Response('not found', 404);
+      });
+
+      final service = MobilePushSubscriptionServiceImpl(
+        authRepository: _FakeAuthRepository(privateKey),
+        tokenProvider: _FakeMobilePushTokenProvider(
+          supported: true,
+          platformKey: 'ios',
+          token: const MobilePushToken(
+            fcmToken: fcmToken,
+            apnsToken: apnsToken,
+          ),
+        ),
+        httpClient: client,
+        preferencesFactory: SharedPreferences.getInstance,
+        serverBaseUri: Uri.parse(apiBase),
+      );
+
+      await service.sync(enabled: true, ownerPubkeyHex: ownerPubkey);
+
+      expect(postedBody['fcm_tokens'], isEmpty);
+      expect(postedBody['apns_tokens'], [apnsToken]);
     });
   });
 }

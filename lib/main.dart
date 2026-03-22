@@ -6,9 +6,11 @@ import 'config/providers/mobile_push_provider.dart';
 import 'config/providers/startup_launch_provider.dart';
 import 'config/router.dart';
 import 'config/theme.dart';
+import 'core/services/mobile_push_runtime_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  registerMobilePushBackgroundHandler();
   runApp(const ProviderScope(child: IrisChatApp()));
 }
 
@@ -20,6 +22,8 @@ class IrisChatApp extends ConsumerWidget {
     final router = ref.watch(routerProvider);
     // Initialize startup-launch preference at app start.
     ref.watch(startupLaunchProvider);
+    // Initialize mobile push runtime for supported mobile platforms.
+    ref.watch(mobilePushRuntimeBootstrapProvider);
     // Initialize mobile push sync for supported platforms.
     ref.watch(mobilePushSyncBootstrapProvider);
 

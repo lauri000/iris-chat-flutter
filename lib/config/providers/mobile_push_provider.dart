@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/services/mobile_push_runtime_service.dart';
 import '../../core/services/mobile_push_subscription_service.dart';
 import 'auth_provider.dart';
 import 'messaging_preferences_provider.dart';
@@ -22,6 +23,10 @@ final mobilePushSubscriptionServiceProvider =
 
 final mobilePushSupportedProvider = Provider<bool>((ref) {
   return ref.watch(mobilePushSubscriptionServiceProvider).isSupported;
+});
+
+final mobilePushRuntimeBootstrapProvider = Provider<void>((ref) {
+  unawaited(Future<void>.microtask(initializeMobilePushRuntime));
 });
 
 final mobilePushSyncBootstrapProvider = Provider<void>((ref) {

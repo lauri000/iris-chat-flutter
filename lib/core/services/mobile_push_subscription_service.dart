@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -11,10 +12,26 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../features/auth/domain/repositories/auth_repository.dart';
 import 'logger_service.dart';
 
-const _defaultNotificationServerUrl = String.fromEnvironment(
+const _notificationServerUrlOverride = String.fromEnvironment(
   'IRIS_NOTIFICATION_SERVER_URL',
-  defaultValue: 'https://notifications.iris.to',
 );
+const _productionNotificationServerUrl = 'https://notifications.iris.to';
+const _sandboxNotificationServerUrl = 'https://notifications-sandbox.iris.to';
+
+String resolveMobilePushServerUrl({
+  required String platformKey,
+  required bool isReleaseMode,
+  String overrideValue = _notificationServerUrlOverride,
+}) {
+  final trimmedOverride = overrideValue.trim();
+  if (trimmedOverride.isNotEmpty) {
+    return trimmedOverride;
+  }
+  if (!isReleaseMode && (platformKey == 'ios' || platformKey == 'android')) {
+    return _sandboxNotificationServerUrl;
+  }
+  return _productionNotificationServerUrl;
+}
 
 class MobilePushToken {
   const MobilePushToken({this.fcmToken, this.apnsToken});
@@ -71,14 +88,15 @@ class FirebaseMobilePushTokenProvider implements MobilePushTokenProvider {
         return null;
       }
 
-      final fcm = _cleanToken(await _messagingInstance.getToken());
-      String? apns;
       if (!kIsWeb && Platform.isIOS) {
-        apns = _cleanToken(await _messagingInstance.getAPNSToken());
+        final apns = await _requestApnsToken();
+        if (apns == null) return null;
+        return MobilePushToken(apnsToken: apns);
       }
-      if (fcm == null && apns == null) return null;
 
-      return MobilePushToken(fcmToken: fcm, apnsToken: apns);
+      final fcm = _cleanToken(await _messagingInstance.getToken());
+      if (fcm == null) return null;
+      return MobilePushToken(fcmToken: fcm);
     } catch (error, stackTrace) {
       Logger.warning(
         'Failed to fetch mobile push token',
@@ -100,6 +118,17 @@ class FirebaseMobilePushTokenProvider implements MobilePushTokenProvider {
 
   FirebaseMessaging get _messagingInstance {
     return _messaging ?? FirebaseMessaging.instance;
+  }
+
+  Future<String?> _requestApnsToken() async {
+    // Trigger native APNS registration before polling the bridged token.
+    await _messagingInstance.getToken();
+    for (var attempt = 0; attempt < 5; attempt++) {
+      final apns = _cleanToken(await _messagingInstance.getAPNSToken());
+      if (apns != null) return apns;
+      await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
+    }
+    return null;
   }
 
   String? _cleanToken(String? token) {
@@ -131,7 +160,13 @@ class MobilePushSubscriptionServiceImpl
        _preferencesFactory =
            preferencesFactory ?? SharedPreferences.getInstance,
        _serverBaseUri =
-           serverBaseUri ?? Uri.parse(_defaultNotificationServerUrl),
+           serverBaseUri ??
+           Uri.parse(
+             resolveMobilePushServerUrl(
+               platformKey: tokenProvider.platformKey,
+               isReleaseMode: kReleaseMode,
+             ),
+           ),
        _dmEventKind = dmEventKind;
 
   final AuthRepository _authRepository;
@@ -298,8 +333,10 @@ class MobilePushSubscriptionServiceImpl
     String ownerPubkeyHex,
     MobilePushToken token,
   ) {
-    final fcmToken = token.fcmToken;
-    final apnsToken = token.apnsToken;
+    final usesFcm = _tokenProvider.platformKey == 'android';
+    final usesApns = _tokenProvider.platformKey == 'ios';
+    final fcmToken = usesFcm ? token.fcmToken : null;
+    final apnsToken = usesApns ? token.apnsToken : null;
 
     return <String, dynamic>{
       'webhooks': const <String>[],
