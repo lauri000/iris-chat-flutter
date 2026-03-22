@@ -33,6 +33,13 @@ String resolveMobilePushServerUrl({
   return _productionNotificationServerUrl;
 }
 
+bool shouldUseProvisionalMobilePushAuthorization({
+  required String platformKey,
+  required bool isReleaseMode,
+}) {
+  return platformKey == 'ios' && !isReleaseMode;
+}
+
 class MobilePushToken {
   const MobilePushToken({this.fcmToken, this.apnsToken});
 
@@ -81,6 +88,10 @@ class FirebaseMobilePushTokenProvider implements MobilePushTokenProvider {
         alert: true,
         badge: true,
         sound: true,
+        provisional: shouldUseProvisionalMobilePushAuthorization(
+          platformKey: platformKey,
+          isReleaseMode: kReleaseMode,
+        ),
       );
       final status = settings.authorizationStatus;
       if (status == AuthorizationStatus.denied ||
@@ -142,7 +153,11 @@ class FirebaseMobilePushTokenProvider implements MobilePushTokenProvider {
 abstract class MobilePushSubscriptionService {
   bool get isSupported;
 
-  Future<void> sync({required bool enabled, required String? ownerPubkeyHex});
+  Future<void> sync({
+    required bool enabled,
+    required String? ownerPubkeyHex,
+    List<String> messageAuthorPubkeysHex = const <String>[],
+  });
 }
 
 class MobilePushSubscriptionServiceImpl
@@ -183,13 +198,19 @@ class MobilePushSubscriptionServiceImpl
   Future<void> sync({
     required bool enabled,
     required String? ownerPubkeyHex,
+    List<String> messageAuthorPubkeysHex = const <String>[],
   }) async {
     if (!isSupported) return;
 
     final owner = _normalizeHex(ownerPubkeyHex);
+    final messageAuthors = _normalizeHexList(messageAuthorPubkeysHex);
     final privkey = (await _authRepository.getPrivateKey())?.trim();
 
-    if (!enabled || owner == null || privkey == null || privkey.isEmpty) {
+    if (!enabled ||
+        owner == null ||
+        privkey == null ||
+        privkey.isEmpty ||
+        messageAuthors.isEmpty) {
       await _disable(privkey: privkey);
       return;
     }
@@ -204,7 +225,10 @@ class MobilePushSubscriptionServiceImpl
       token: token,
     );
 
-    final payload = _buildPayload(owner, token);
+    final payload = _buildPayload(
+      messageAuthorPubkeysHex: messageAuthors,
+      token: token,
+    );
     final targetId = existingId;
     if (targetId != null) {
       final update = await _authedRequest(
@@ -329,10 +353,10 @@ class MobilePushSubscriptionServiceImpl
         containsToken(subscription['apns_tokens'], token.apnsToken);
   }
 
-  Map<String, dynamic> _buildPayload(
-    String ownerPubkeyHex,
-    MobilePushToken token,
-  ) {
+  Map<String, dynamic> _buildPayload({
+    required List<String> messageAuthorPubkeysHex,
+    required MobilePushToken token,
+  }) {
     final usesFcm = _tokenProvider.platformKey == 'android';
     final usesApns = _tokenProvider.platformKey == 'ios';
     final fcmToken = usesFcm ? token.fcmToken : null;
@@ -345,7 +369,7 @@ class MobilePushSubscriptionServiceImpl
       'apns_tokens': apnsToken == null ? const <String>[] : <String>[apnsToken],
       'filter': <String, dynamic>{
         'kinds': <int>[_dmEventKind],
-        '#p': <String>[ownerPubkeyHex],
+        'authors': messageAuthorPubkeysHex,
       },
     };
   }
@@ -431,6 +455,17 @@ class MobilePushSubscriptionServiceImpl
     final isHex = RegExp(r'^[0-9a-f]+$').hasMatch(normalized);
     if (!isHex) return null;
     return normalized;
+  }
+
+  List<String> _normalizeHexList(Iterable<String> values) {
+    final normalized = <String>{};
+    for (final value in values) {
+      final hex = _normalizeHex(value);
+      if (hex != null) {
+        normalized.add(hex);
+      }
+    }
+    return normalized.toList(growable: false);
   }
 
   String get _storedSubscriptionIdKey =>

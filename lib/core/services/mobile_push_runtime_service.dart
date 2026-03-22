@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -20,8 +21,15 @@ const _androidChannel = AndroidNotificationChannel(
 
 final FlutterLocalNotificationsPlugin _mobilePushNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
+final StreamController<MobilePushNotificationContent>
+_mobilePushReceivedNotificationsController =
+    StreamController<MobilePushNotificationContent>.broadcast();
 bool _mobilePushNotificationsInitialized = false;
 bool _mobilePushBackgroundHandlerRegistered = false;
+bool _mobilePushForegroundMessageListenerRegistered = false;
+
+Stream<MobilePushNotificationContent> get mobilePushReceivedNotifications =>
+    _mobilePushReceivedNotificationsController.stream;
 
 class MobilePushNotificationContent {
   const MobilePushNotificationContent({
@@ -77,6 +85,7 @@ Future<void> initializeMobilePushRuntime() async {
 
   await _ensureFirebaseReady();
   await _ensureLocalNotificationsReady();
+  _ensureForegroundMessageListenerRegistered();
 
   if (Platform.isIOS) {
     try {
@@ -126,6 +135,23 @@ Future<void> _ensureLocalNotificationsReady() async {
   _mobilePushNotificationsInitialized = true;
 }
 
+void _ensureForegroundMessageListenerRegistered() {
+  if (_mobilePushForegroundMessageListenerRegistered) return;
+
+  FirebaseMessaging.onMessage.listen((message) async {
+    final content = MobilePushNotificationContent.fromData(message.data);
+    if (content != null && !Platform.isAndroid) {
+      _mobilePushReceivedNotificationsController.add(content);
+    }
+
+    if (Platform.isAndroid) {
+      await showLocalNotificationForRemoteMessage(message);
+    }
+  });
+
+  _mobilePushForegroundMessageListenerRegistered = true;
+}
+
 void _handleNotificationResponse(NotificationResponse response) {}
 
 @pragma('vm:entry-point')
@@ -148,6 +174,7 @@ Future<void> showLocalNotificationForRemoteMessage(
 
   final content = MobilePushNotificationContent.fromData(message.data);
   if (content == null) return;
+  _mobilePushReceivedNotificationsController.add(content);
 
   try {
     await _mobilePushNotificationsPlugin.show(

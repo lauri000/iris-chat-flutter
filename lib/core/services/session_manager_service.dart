@@ -86,6 +86,35 @@ bool sessionStateTracksSenderPubkeyJson(
   }
 }
 
+List<String> sessionStateTrackedSenderPubkeysJson(String stateJson) {
+  try {
+    final decoded = jsonDecode(stateJson);
+    if (decoded is! Map<String, dynamic>) return const <String>[];
+
+    final senderPubkeys = <String>{};
+    for (final value in <String?>[
+      _jsonStringValue(
+        decoded,
+        'their_current_nostr_public_key',
+        'theirCurrentNostrPublicKey',
+      ),
+      _jsonStringValue(
+        decoded,
+        'their_next_nostr_public_key',
+        'theirNextNostrPublicKey',
+      ),
+    ]) {
+      final normalized = value?.trim().toLowerCase();
+      if (normalized == null || normalized.length != 64) continue;
+      if (!RegExp(r'^[0-9a-f]+$').hasMatch(normalized)) continue;
+      senderPubkeys.add(normalized);
+    }
+    return senderPubkeys.toList(growable: false);
+  } catch (_) {
+    return const <String>[];
+  }
+}
+
 List<String> storedDeviceIdsMissingReceivingStateForSender({
   required String userRecordJson,
   required String senderPubkeyHex,
@@ -159,6 +188,31 @@ List<String> storedDeviceIdsMissingReceivingStateForSender({
     }
 
     return matchingDeviceIds;
+  } catch (_) {
+    return const <String>[];
+  }
+}
+
+List<String> storedSenderPubkeysFromUserRecordJson(String userRecordJson) {
+  try {
+    final decoded = jsonDecode(userRecordJson);
+    if (decoded is! Map<String, dynamic>) return const <String>[];
+
+    final devices = decoded['devices'];
+    if (devices is! List) return const <String>[];
+
+    final senderPubkeys = <String>{};
+    for (final rawDevice in devices) {
+      if (rawDevice is! Map) continue;
+      final device = Map<String, dynamic>.from(rawDevice);
+      for (final sessionMap in _deviceSessionMaps(device)) {
+        senderPubkeys.addAll(
+          sessionStateTrackedSenderPubkeysJson(jsonEncode(sessionMap)),
+        );
+      }
+    }
+
+    return senderPubkeys.toList(growable: false);
   } catch (_) {
     return const <String>[];
   }
@@ -1104,6 +1158,32 @@ class SessionManagerService {
     });
   }
 
+  Future<List<String>> getMessagePushAuthorPubkeys(
+    String peerOwnerPubkeyHex,
+  ) async {
+    final normalizedPeer = peerOwnerPubkeyHex.trim().toLowerCase();
+    if (normalizedPeer.isEmpty) return const <String>[];
+
+    final storagePath = _processedMessageEventIdsPath == null
+        ? await _resolveStoragePath()
+        : File(_processedMessageEventIdsPath!).parent.path;
+    final userRecordFile = File('$storagePath/user_$normalizedPeer.json');
+    if (userRecordFile.existsSync()) {
+      final stored = storedSenderPubkeysFromUserRecordJson(
+        userRecordFile.readAsStringSync(),
+      );
+      if (stored.isNotEmpty) {
+        return stored;
+      }
+    }
+
+    final activeSessionState = await getActiveSessionState(normalizedPeer);
+    if (activeSessionState == null || activeSessionState.isEmpty) {
+      return const <String>[];
+    }
+    return sessionStateTrackedSenderPubkeysJson(activeSessionState);
+  }
+
   Future<int> getTotalSessions() async {
     return _runExclusive(() async {
       final manager = _manager;
@@ -1360,7 +1440,10 @@ class SessionManagerService {
       },
     ]..sort();
 
-    final authorsChanged = !_stringListsEqual(_groupOuterSenderEventPubkeys, deduped);
+    final authorsChanged = !_stringListsEqual(
+      _groupOuterSenderEventPubkeys,
+      deduped,
+    );
     if (!authorsChanged && addedSenderEventPubkeys.isEmpty) {
       return;
     }

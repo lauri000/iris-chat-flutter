@@ -82,6 +82,8 @@ void main() {
       '1111111111111111111111111111111111111111111111111111111111111111';
   const ownerPubkey =
       '2222222222222222222222222222222222222222222222222222222222222222';
+  const messageAuthorPubkey =
+      '3333333333333333333333333333333333333333333333333333333333333333';
   const fcmToken = 'fcm-token-123';
   const apnsToken = 'apns-token-123';
   const apiBase = 'https://notifications.iris.to';
@@ -104,6 +106,30 @@ void main() {
       expect(
         resolveMobilePushServerUrl(platformKey: 'ios', isReleaseMode: true),
         apiBase,
+      );
+    });
+
+    test('uses provisional notification authorization on debug iOS only', () {
+      expect(
+        shouldUseProvisionalMobilePushAuthorization(
+          platformKey: 'ios',
+          isReleaseMode: false,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldUseProvisionalMobilePushAuthorization(
+          platformKey: 'ios',
+          isReleaseMode: true,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldUseProvisionalMobilePushAuthorization(
+          platformKey: 'android',
+          isReleaseMode: false,
+        ),
+        isFalse,
       );
     });
 
@@ -143,7 +169,11 @@ void main() {
           serverBaseUri: Uri.parse(apiBase),
         );
 
-        await service.sync(enabled: true, ownerPubkeyHex: ownerPubkey);
+        await service.sync(
+          enabled: true,
+          ownerPubkeyHex: ownerPubkey,
+          messageAuthorPubkeysHex: const [messageAuthorPubkey],
+        );
 
         expect(getCalls, 1);
         expect(postCalls, 1);
@@ -152,7 +182,7 @@ void main() {
         expect(postedBody['fcm_tokens'], [fcmToken]);
         expect(postedBody['apns_tokens'], isEmpty);
         expect(postedBody['filter']['kinds'], [1060]);
-        expect(postedBody['filter']['#p'], [ownerPubkey]);
+        expect(postedBody['filter']['authors'], [messageAuthorPubkey]);
 
         expect(postAuthHeader.startsWith('Nostr '), isTrue);
         final authEventJson = utf8.decode(
@@ -197,7 +227,7 @@ void main() {
       final client = MockClient((request) async {
         if (request.method == 'GET' && request.url.path == '/subscriptions') {
           return http.Response(
-            '{"sub-1":{"filter":{"kinds":[1060],"#p":["$ownerPubkey"]},"fcm_tokens":["$fcmToken"],"apns_tokens":[]}}',
+            '{"sub-1":{"filter":{"kinds":[1060],"authors":["$messageAuthorPubkey"]},"fcm_tokens":["$fcmToken"],"apns_tokens":[]}}',
             200,
           );
         }
@@ -221,7 +251,11 @@ void main() {
         serverBaseUri: Uri.parse(apiBase),
       );
 
-      await service.sync(enabled: true, ownerPubkeyHex: ownerPubkey);
+      await service.sync(
+        enabled: true,
+        ownerPubkeyHex: ownerPubkey,
+        messageAuthorPubkeysHex: const [messageAuthorPubkey],
+      );
       expect(updateCalls, 1);
     });
 
@@ -281,7 +315,11 @@ void main() {
         serverBaseUri: Uri.parse(apiBase),
       );
 
-      await service.sync(enabled: true, ownerPubkeyHex: ownerPubkey);
+      await service.sync(
+        enabled: true,
+        ownerPubkeyHex: ownerPubkey,
+        messageAuthorPubkeysHex: const [messageAuthorPubkey],
+      );
       expect(calls, 0);
     });
 
@@ -315,10 +353,15 @@ void main() {
         serverBaseUri: Uri.parse(apiBase),
       );
 
-      await service.sync(enabled: true, ownerPubkeyHex: ownerPubkey);
+      await service.sync(
+        enabled: true,
+        ownerPubkeyHex: ownerPubkey,
+        messageAuthorPubkeysHex: const [messageAuthorPubkey],
+      );
 
       expect(postedBody['fcm_tokens'], isEmpty);
       expect(postedBody['apns_tokens'], [apnsToken]);
+      expect(postedBody['filter']['authors'], [messageAuthorPubkey]);
     });
   });
 }
