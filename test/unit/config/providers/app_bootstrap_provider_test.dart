@@ -160,10 +160,19 @@ void main() {
       when(
         () => sessionManager.getActiveSessionState(any()),
       ).thenAnswer((_) async => null);
-      when(sessionManager.refreshSubscription).thenAnswer(_completeVoidAnswer);
+      when(sessionManager.refreshSubscription).thenAnswer((_) async {
+        log.add('refreshSubscription');
+      });
       when(
         () => sessionManager.repairRecentlyActiveLinkedDeviceRecords(any()),
-      ).thenAnswer((_) async {});
+      ).thenAnswer((_) async {
+        log.add('repairRecentlyActiveLinkedDeviceRecords');
+      });
+      when(
+        () => sessionManager.bootstrapRecentMessageEventsFromRelay(any()),
+      ).thenAnswer((_) async {
+        log.add('bootstrapRecentMessageEventsFromRelay');
+      });
       when(
         sessionManager.bootstrapOwnerSelfSessionIfNeeded,
       ).thenAnswer(_completeFalseAnswer);
@@ -214,15 +223,26 @@ void main() {
         isLinkedDevice: true,
       );
 
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await untilCalled(
+        () => sessionManager.bootstrapRecentMessageEventsFromRelay(any()),
+      );
 
       expect(log, isNotEmpty);
+      final subscriptionIndex = log.indexOf('messageSubscription');
+      final messageBootstrapIndex = log.indexOf(
+        'bootstrapRecentMessageEventsFromRelay',
+      );
+
+      expect(subscriptionIndex, isNonNegative);
+      expect(messageBootstrapIndex, isNonNegative);
       expect(
-        log.first,
-        'messageSubscription',
+        subscriptionIndex,
+        lessThan(messageBootstrapIndex),
         reason:
-            'Realtime decrypted-message listeners must attach before the slower '
-            'bootstrap sequence, otherwise early messages can be dropped.',
+            'Realtime decrypted-message listeners must attach before the '
+            'message backfill bootstrap sequence, otherwise decrypted events '
+            'can be marked processed and dropped before chat persistence sees '
+            'them.',
       );
     });
   });

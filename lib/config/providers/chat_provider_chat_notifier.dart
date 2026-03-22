@@ -415,6 +415,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
 
       final ownerPubkeyHex = _sessionManagerService.ownerPubkeyHex;
+      _debugChatLog(
+        'receiveDecryptedMessage sender=$senderPubkeyHex rumorPubkey=${rumor.pubkey} kind=${rumor.kind} p=${getFirstTagValue(rumor.tags, 'p') ?? ""} owner=${ownerPubkeyHex ?? ""}',
+      );
       final peerPubkeyHex = await _resolveConversationPeerPubkey(
         senderPubkeyHex: senderPubkeyHex,
         rumor: rumor,
@@ -423,6 +426,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       if (!mounted) return null;
 
       if (peerPubkeyHex == null || peerPubkeyHex.isEmpty) {
+        _debugChatLog(
+          'receiveDecryptedMessage unresolved sender=$senderPubkeyHex rumorPubkey=${rumor.pubkey} rumorId=${rumor.id}',
+        );
         return null;
       }
       await _armPeerSession(peerPubkeyHex);
@@ -434,6 +440,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
       if (!mounted) return null;
       final sessionId = existingSession?.id ?? peerPubkeyHex;
+      _debugChatLog(
+        'receiveDecryptedMessage resolvedPeer=$peerPubkeyHex sessionId=$sessionId existing=${existingSession != null}',
+      );
 
       if (existingSession == null) {
         final session = ChatSession(
@@ -653,6 +662,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
 
       await addReceivedMessage(message);
+      _debugChatLog(
+        'receiveDecryptedMessage saved rumorId=${rumor.id} sessionId=$sessionId direction=${message.direction.name}',
+      );
       if (!mounted) return null;
 
       // Auto-send delivery receipt for incoming messages.
@@ -703,11 +715,34 @@ class ChatNotifier extends StateNotifier<ChatState> {
             rumorTags: rumor.tags,
             senderPubkeyHex: sender,
           );
+    _debugChatLog(
+      'resolveConversationPeer sender=$sender rumorPubkey=$rumorAuthor owner=${owner ?? ""} p=${pTagPubkey ?? ""} candidates=${candidates.join(",")}',
+    );
 
     // Self-targeted rumors should stay in the owner/self conversation even if
     // there happens to be a direct session stored for one of our own devices.
     if (isSelfTargetedRumor) {
+      _debugChatLog(
+        'resolveConversationPeer selfTargeted owner=$owner',
+      );
       return owner;
+    }
+
+    if (owner != null &&
+        sender.isNotEmpty &&
+        RegExp(r'^[0-9a-f]{64}$').hasMatch(sender) &&
+        sender != owner &&
+        sender != rumorAuthor) {
+      final senderSession = await _sessionDatasource.getSessionByRecipient(
+        sender,
+      );
+      if (!mounted) return null;
+      if (senderSession != null) {
+        _debugChatLog(
+          'resolveConversationPeer preferSender=$sender sessionId=${senderSession.id}',
+        );
+        return sender;
+      }
     }
 
     for (final candidate in candidates) {
@@ -717,15 +752,22 @@ class ChatNotifier extends StateNotifier<ChatState> {
         candidate,
       );
       if (!mounted) return null;
+      _debugChatLog(
+        'resolveConversationPeer candidate=$candidate existing=${existing != null} sessionId=${existing?.id ?? ""}',
+      );
       if (existing != null) return candidate;
     }
 
     for (final candidate in candidates) {
       if (owner != null && candidate == owner) continue;
-      if (candidate.isNotEmpty) return candidate;
+      if (candidate.isNotEmpty) {
+        _debugChatLog('resolveConversationPeer fallback=$candidate');
+        return candidate;
+      }
     }
 
     if (owner != null && candidates.isNotEmpty && candidates.last == owner) {
+      _debugChatLog('resolveConversationPeer ownerFallback=$owner');
       return owner;
     }
 

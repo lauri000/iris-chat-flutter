@@ -911,6 +911,76 @@ void main() {
         },
       );
 
+      test(
+        'prefers existing owner chat over sender-device chat when decrypted sender is the owner',
+        () async {
+          const ourOwnerPubkey =
+              '1111111111111111111111111111111111111111111111111111111111111111';
+          const peerOwnerPubkey =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+          const peerLinkedDevicePubkey =
+              '3333333333333333333333333333333333333333333333333333333333333333';
+
+          final ownerSession = ChatSession(
+            id: 'owner-session',
+            recipientPubkeyHex: peerOwnerPubkey,
+            createdAt: DateTime.now(),
+          );
+          final deviceSession = ChatSession(
+            id: 'device-session',
+            recipientPubkeyHex: peerLinkedDevicePubkey,
+            createdAt: DateTime.now(),
+          );
+
+          when(
+            () => mockSessionManagerService.ownerPubkeyHex,
+          ).thenReturn(ourOwnerPubkey);
+          when(
+            () => mockMessageDatasource.messageExists(any()),
+          ).thenAnswer((_) async => false);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(any()),
+          ).thenAnswer((_) async => null);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(peerOwnerPubkey),
+          ).thenAnswer((_) async => ownerSession);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(
+              peerLinkedDevicePubkey,
+            ),
+          ).thenAnswer((_) async => deviceSession);
+          when(
+            () => mockSessionDatasource.saveSession(any()),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockMessageDatasource.saveMessage(any()),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockSessionManagerService.sendReceipt(
+              recipientPubkeyHex: any(named: 'recipientPubkeyHex'),
+              receiptType: any(named: 'receiptType'),
+              messageIds: any(named: 'messageIds'),
+            ),
+          ).thenAnswer((_) async {});
+
+          const rumorJson =
+              '{"id":"linked-owner-remote-1","pubkey":"$peerLinkedDevicePubkey","created_at":1700000002,"kind":14,"content":"hello from linked device via owner sender","tags":[["p","$ourOwnerPubkey"]]}';
+
+          final received = await notifier.receiveDecryptedMessage(
+            peerOwnerPubkey,
+            rumorJson,
+          );
+
+          expect(received, isNotNull);
+          expect(received!.sessionId, ownerSession.id);
+          expect(received.isIncoming, isTrue);
+          verify(
+            () => mockSessionManagerService.setupUser(peerOwnerPubkey),
+          ).called(1);
+          verify(() => mockMessageDatasource.saveMessage(any())).called(1);
+        },
+      );
+
       test('does not notify for messages created before app launch', () async {
         const peerPubkey =
             '2222222222222222222222222222222222222222222222222222222222222222';

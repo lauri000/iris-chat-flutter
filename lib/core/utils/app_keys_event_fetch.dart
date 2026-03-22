@@ -16,6 +16,7 @@ Future<List<NostrEvent>> fetchAppKeysEvents(
   NostrService nostrService, {
   required String ownerPubkeyHex,
   Duration timeout = const Duration(seconds: 2),
+  Duration? connectionTimeout,
   String subscriptionLabel = 'appkeys-fetch',
 }) async {
   final normalizedOwnerPubkeyHex = ownerPubkeyHex.trim().toLowerCase();
@@ -29,18 +30,30 @@ Future<List<NostrEvent>> fetchAppKeysEvents(
   final seenEventIds = <String>{};
   var completed = false;
   Timer? settleTimer;
+  Timer? connectionTimer;
+  final connectionWaitTimeout = connectionTimeout ?? timeout;
   late final StreamSubscription<NostrEvent> sub;
+  StreamSubscription<RelayConnectionEvent>? connectionSub;
 
   Future<List<NostrEvent>> finish() async {
     if (completed) return events;
     completed = true;
     settleTimer?.cancel();
+    connectionTimer?.cancel();
     await sub.cancel();
+    await connectionSub?.cancel();
     nostrService.closeSubscription(subid);
     return events;
   }
 
   final completer = Completer<List<NostrEvent>>();
+  void startResponseTimeout() {
+    connectionTimer?.cancel();
+    connectionTimer = Timer(connectionWaitTimeout, () async {
+      if (completer.isCompleted) return;
+      completer.complete(await finish());
+    });
+  }
   void scheduleFinish() {
     if (completed) return;
     settleTimer?.cancel();
@@ -69,10 +82,20 @@ Future<List<NostrEvent>> fetchAppKeysEvents(
     ),
   );
 
-  Timer(timeout, () async {
-    if (completer.isCompleted) return;
-    completer.complete(await finish());
-  });
+  if (nostrService.connectedCount > 0) {
+    startResponseTimeout();
+  } else {
+    connectionSub = nostrService.connectionEvents.listen((event) {
+      if (completed || event.status != RelayStatus.connected) return;
+      connectionSub?.cancel();
+      connectionSub = null;
+      startResponseTimeout();
+    });
+    connectionTimer = Timer(timeout, () async {
+      if (completer.isCompleted) return;
+      completer.complete(await finish());
+    });
+  }
 
   return completer.future;
 }
@@ -93,12 +116,14 @@ Future<List<FfiDeviceEntry>> fetchLatestAppKeysDevices(
   required String ownerPubkeyHex,
   String? ownerPrivkeyHex,
   Duration timeout = const Duration(seconds: 2),
+  Duration? connectionTimeout,
   String subscriptionLabel = 'appkeys-fetch',
 }) async {
   final events = await fetchAppKeysEvents(
     nostrService,
     ownerPubkeyHex: ownerPubkeyHex,
     timeout: timeout,
+    connectionTimeout: connectionTimeout,
     subscriptionLabel: subscriptionLabel,
   );
   return resolveLatestAppKeysDevicesFromEvents(

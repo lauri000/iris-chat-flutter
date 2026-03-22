@@ -28,5 +28,49 @@ void main() {
       expect(content, contains('Copy "Launch at Login Helper"'));
       expect(content, contains('copy-helper-swiftpm.sh'));
     });
+
+    test('AppDelegate minimizes login-item launches', () {
+      final appDelegateFile = File('macos/Runner/AppDelegate.swift');
+      expect(appDelegateFile.existsSync(), isTrue);
+
+      final content = appDelegateFile.readAsStringSync();
+      expect(content, contains('import LaunchAtLogin'));
+      expect(content, contains('static var wasLaunchedAtLogin'));
+      expect(content, contains('keyAELaunchedAsLogInItem'));
+      expect(
+        content,
+        contains('let launchedAtLogin = LaunchAtLogin.wasLaunchedAtLogin'),
+      );
+      expect(content, contains('miniaturize(nil)'));
+      expect(content, contains('activateExistingInstanceIfNeeded'));
+      expect(
+        content,
+        contains('runningApplications(withBundleIdentifier: bundleIdentifier)'),
+      );
+      expect(
+        content,
+        contains(
+          'activate(options: [.activateAllWindows, .activateIgnoringOtherApps])',
+        ),
+      );
+      expect(content, contains('NSApp.terminate(nil)'));
+      expect(
+        content,
+        isNot(contains('super.applicationDidFinishLaunching(notification)')),
+        reason:
+            'FlutterAppDelegate on macOS does not implement '
+            'applicationDidFinishLaunching:, so calling super crashes on app '
+            'startup before Flutter bootstrap can run.',
+      );
+    });
+
+    test('Info.plist prohibits multiple macOS instances', () {
+      final infoPlistFile = File('macos/Runner/Info.plist');
+      expect(infoPlistFile.existsSync(), isTrue);
+
+      final content = infoPlistFile.readAsStringSync();
+      expect(content, contains('<key>LSMultipleInstancesProhibited</key>'));
+      expect(content, contains('<true/>'));
+    });
   });
 }

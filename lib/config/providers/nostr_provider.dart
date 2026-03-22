@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/services/nostr_service.dart';
 import '../../core/services/profile_service.dart';
 import '../../core/services/session_manager_service.dart';
+import '../../core/services/logger_service.dart';
 import '../../core/utils/invite_response_subscription.dart' as invite_response;
 import '../../core/utils/nostr_rumor.dart';
 import '../../features/chat/domain/utils/chat_settings.dart';
@@ -13,6 +14,8 @@ import 'auth_provider.dart';
 import 'chat_provider.dart';
 import 'invite_provider.dart';
 import 'nostr_relay_settings_provider.dart';
+
+void _debugNdrLog(String message) {}
 
 abstract class SessionManagerTeardown {
   Future<void> disposeAndClear(SessionManagerService? service);
@@ -80,6 +83,18 @@ final sessionManagerTeardownProvider = Provider<SessionManagerTeardown>((ref) {
   return const DefaultSessionManagerTeardown();
 });
 
+final relayMessageBackfillDebounceProvider = Provider<Duration>((ref) {
+  return const Duration(seconds: 1);
+});
+
+final relayMessageBackfillIntervalProvider = Provider<Duration>((ref) {
+  return const Duration(seconds: 10);
+});
+
+final relayMessageBackfillWindowProvider = Provider<Duration>((ref) {
+  return const Duration(minutes: 10);
+});
+
 /// Provider for message subscription (backwards-compatible alias).
 final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
   final service = ref.watch(sessionManagerServiceProvider);
@@ -89,9 +104,16 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
   final messageDatasource = ref.watch(messageDatasourceProvider);
   final groupDatasource = ref.watch(groupDatasourceProvider);
   final groupMessageDatasource = ref.watch(groupMessageDatasourceProvider);
+  final relayBackfillDebounce = ref.watch(relayMessageBackfillDebounceProvider);
+  final relayBackfillInterval = ref.watch(relayMessageBackfillIntervalProvider);
+  final relayBackfillWindow = ref.watch(relayMessageBackfillWindowProvider);
 
   const groupSenderKeyDistributionKind = 10446;
   var disposed = false;
+
+  _debugNdrLog(
+    'messageSubscriptionProvider build owner=${service.ownerPubkeyHex ?? ""}',
+  );
 
   // Serialize all processing in this provider to reduce SQLite "database locked"
   // warnings caused by concurrent async stream handlers.
@@ -107,6 +129,8 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
   }
 
   Timer? expirationTimer;
+  Timer? relayBootstrapTimer;
+  Timer? relayBootstrapIntervalTimer;
 
   void scheduleExpirationTick(Duration delay) {
     if (disposed) return;
@@ -179,7 +203,68 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
     disposed = true;
     expirationTimer?.cancel();
     expirationTimer = null;
+    relayBootstrapTimer?.cancel();
+    relayBootstrapTimer = null;
+    relayBootstrapIntervalTimer?.cancel();
+    relayBootstrapIntervalTimer = null;
   });
+
+  List<String> currentSessionBootstrapTargets() {
+    final targets = <String>[];
+    final seen = <String>{};
+
+    void addTarget(String? raw) {
+      final normalized = raw?.trim().toLowerCase() ?? '';
+      if (normalized.isEmpty || !seen.add(normalized)) return;
+      targets.add(normalized);
+    }
+
+    for (final session in ref.read(sessionStateProvider).sessions) {
+      addTarget(session.recipientPubkeyHex);
+    }
+    addTarget(service.ownerPubkeyHex);
+
+    return targets;
+  }
+
+  void scheduleRelayMessageBackfill({Duration? delay}) {
+    if (disposed) return;
+    relayBootstrapTimer?.cancel();
+    relayBootstrapTimer = Timer(delay ?? relayBackfillDebounce, () {
+      schedule(() async {
+        if (disposed) return;
+        final targets = currentSessionBootstrapTargets();
+        _debugNdrLog(
+          'relay message backfill tick targets=${targets.join(",")}',
+        );
+        if (targets.isEmpty) return;
+        try {
+          await service.bootstrapRecentMessageEventsFromRelay(
+            targets,
+            window: relayBackfillWindow,
+          );
+        } catch (error, stackTrace) {
+          Logger.warning(
+            'Failed to backfill recent messages after relay connect',
+            category: LogCategory.session,
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+      });
+    });
+  }
+
+  void startPeriodicRelayMessageBackfill() {
+    relayBootstrapIntervalTimer?.cancel();
+    relayBootstrapIntervalTimer = null;
+    if (relayBackfillInterval <= Duration.zero) return;
+    relayBootstrapIntervalTimer = Timer.periodic(relayBackfillInterval, (_) {
+      scheduleRelayMessageBackfill(delay: Duration.zero);
+    });
+  }
+
+  startPeriodicRelayMessageBackfill();
 
   // Coalesce refresh work so repeated invite state changes don't build up an
   // unbounded Future chain (which can lead to runaway memory usage).
@@ -221,9 +306,14 @@ final messageSubscriptionProvider = Provider<SessionManagerService>((ref) {
     if (disposed) return;
     requestInviteResponseSubscriptionRefresh();
   });
+  final connectionSub = nostrService.connectionEvents.listen((event) {
+    if (disposed || event.status != RelayStatus.connected) return;
+    scheduleRelayMessageBackfill();
+  });
   ref.onDispose(() {
     disposed = true;
     nostrService.closeSubscription(invite_response.appInviteResponsesSubId);
+    unawaited(connectionSub.cancel());
   });
 
   final sub = service.decryptedMessages.listen((message) {

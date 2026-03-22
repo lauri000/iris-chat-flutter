@@ -965,11 +965,11 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_ndr_ffi_fn_func_generate_keypair(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    fun uniffi_ndr_ffi_fn_func_parse_app_keys_event(`eventJson`: RustBuffer.ByValue,`ownerPrivkeyHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_ndr_ffi_fn_func_parse_app_keys_event(`eventJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_ndr_ffi_fn_func_resolve_conversation_candidate_pubkeys(`ownerPubkeyHex`: RustBuffer.ByValue,`rumorPubkeyHex`: RustBuffer.ByValue,`rumorTags`: RustBuffer.ByValue,`senderPubkeyHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    fun uniffi_ndr_ffi_fn_func_resolve_latest_app_keys_devices(`eventJsons`: RustBuffer.ByValue,`ownerPrivkeyHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    fun uniffi_ndr_ffi_fn_func_resolve_latest_app_keys_devices(`eventJsons`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_ndr_ffi_fn_func_version(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -1223,13 +1223,13 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_ndr_ffi_checksum_func_generate_keypair() != 56100.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_ndr_ffi_checksum_func_parse_app_keys_event() != 24603.toShort()) {
+    if (lib.uniffi_ndr_ffi_checksum_func_parse_app_keys_event() != 33390.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_ndr_ffi_checksum_func_resolve_conversation_candidate_pubkeys() != 3184.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_ndr_ffi_checksum_func_resolve_latest_app_keys_devices() != 24185.toShort()) {
+    if (lib.uniffi_ndr_ffi_checksum_func_resolve_latest_app_keys_devices() != 26843.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_ndr_ffi_checksum_func_version() != 58200.toShort()) {
@@ -3327,9 +3327,7 @@ public object FfiConverterTypeDecryptResult: FfiConverterRustBuffer<DecryptResul
  */
 data class FfiDeviceEntry (
     var `identityPubkeyHex`: kotlin.String, 
-    var `createdAt`: kotlin.ULong, 
-    var `deviceLabel`: kotlin.String?, 
-    var `clientLabel`: kotlin.String?
+    var `createdAt`: kotlin.ULong
 ) {
     
     companion object
@@ -3343,23 +3341,17 @@ public object FfiConverterTypeFfiDeviceEntry: FfiConverterRustBuffer<FfiDeviceEn
         return FfiDeviceEntry(
             FfiConverterString.read(buf),
             FfiConverterULong.read(buf),
-            FfiConverterOptionalString.read(buf),
-            FfiConverterOptionalString.read(buf),
         )
     }
 
     override fun allocationSize(value: FfiDeviceEntry) = (
             FfiConverterString.allocationSize(value.`identityPubkeyHex`) +
-            FfiConverterULong.allocationSize(value.`createdAt`) +
-            FfiConverterOptionalString.allocationSize(value.`deviceLabel`) +
-            FfiConverterOptionalString.allocationSize(value.`clientLabel`)
+            FfiConverterULong.allocationSize(value.`createdAt`)
     )
 
     override fun write(value: FfiDeviceEntry, buf: ByteBuffer) {
             FfiConverterString.write(value.`identityPubkeyHex`, buf)
             FfiConverterULong.write(value.`createdAt`, buf)
-            FfiConverterOptionalString.write(value.`deviceLabel`, buf)
-            FfiConverterOptionalString.write(value.`clientLabel`, buf)
     }
 }
 
@@ -4516,11 +4508,11 @@ public object FfiConverterSequenceSequenceString: FfiConverterRustBuffer<List<Li
         /**
          * Parse an AppKeys event JSON and return the contained device entries.
          */
-    @Throws(NdrException::class) fun `parseAppKeysEvent`(`eventJson`: kotlin.String, `ownerPrivkeyHex`: kotlin.String?): List<FfiDeviceEntry> {
+    @Throws(NdrException::class) fun `parseAppKeysEvent`(`eventJson`: kotlin.String): List<FfiDeviceEntry> {
             return FfiConverterSequenceTypeFfiDeviceEntry.lift(
     uniffiRustCallWithError(NdrException) { _status ->
     UniffiLib.INSTANCE.uniffi_ndr_ffi_fn_func_parse_app_keys_event(
-        FfiConverterString.lower(`eventJson`),FfiConverterOptionalString.lower(`ownerPrivkeyHex`),_status)
+        FfiConverterString.lower(`eventJson`),_status)
 }
     )
     }
@@ -4541,11 +4533,11 @@ public object FfiConverterSequenceSequenceString: FfiConverterRustBuffer<List<Li
         /**
          * Resolve the latest authorized device list from a set of AppKeys event JSON strings.
          */
-    @Throws(NdrException::class) fun `resolveLatestAppKeysDevices`(`eventJsons`: List<kotlin.String>, `ownerPrivkeyHex`: kotlin.String?): List<FfiDeviceEntry> {
+    @Throws(NdrException::class) fun `resolveLatestAppKeysDevices`(`eventJsons`: List<kotlin.String>): List<FfiDeviceEntry> {
             return FfiConverterSequenceTypeFfiDeviceEntry.lift(
     uniffiRustCallWithError(NdrException) { _status ->
     UniffiLib.INSTANCE.uniffi_ndr_ffi_fn_func_resolve_latest_app_keys_devices(
-        FfiConverterSequenceString.lower(`eventJsons`),FfiConverterOptionalString.lower(`ownerPrivkeyHex`),_status)
+        FfiConverterSequenceString.lower(`eventJsons`),_status)
 }
     )
     }

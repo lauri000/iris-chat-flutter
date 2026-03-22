@@ -29,8 +29,12 @@ class LaunchAtStartupAdapter {
     return Platform.isLinux || Platform.isMacOS || Platform.isWindows;
   }
 
-  void setup({required String appName, required String appPath}) {
-    launchAtStartup.setup(appName: appName, appPath: appPath);
+  void setup({
+    required String appName,
+    required String appPath,
+    List<String> args = const [],
+  }) {
+    launchAtStartup.setup(appName: appName, appPath: appPath, args: args);
   }
 
   Future<bool> enable() => launchAtStartup.enable();
@@ -51,6 +55,7 @@ class StartupLaunchServiceImpl implements StartupLaunchService {
 
   static const _prefKey = 'settings.launch_on_startup';
   static const _appName = 'iris chat';
+  static const _startupLaunchArg = '--launch-at-startup';
 
   final LaunchAtStartupAdapter _adapter;
   final Future<SharedPreferences> Function() _preferencesFactory;
@@ -129,7 +134,11 @@ class StartupLaunchServiceImpl implements StartupLaunchService {
 
   Future<void> _ensureSetup() async {
     if (_setupDone) return;
-    _adapter.setup(appName: _appName, appPath: Platform.resolvedExecutable);
+    _adapter.setup(
+      appName: _appName,
+      appPath: Platform.resolvedExecutable,
+      args: const [_startupLaunchArg],
+    );
     _setupDone = true;
   }
 

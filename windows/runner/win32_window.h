@@ -37,7 +37,7 @@ class Win32Window {
   bool Create(const std::wstring& title, const Point& origin, const Size& size);
 
   // Show the current window. Returns true if the window was successfully shown.
-  bool Show();
+  bool Show(int nCmdShow = SW_SHOWNORMAL);
 
   // Release OS resources associated with window.
   void Destroy();

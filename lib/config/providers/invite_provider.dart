@@ -685,14 +685,15 @@ class InviteNotifier extends StateNotifier<InviteState> {
       final isOwnerDeviceResponse =
           normalizedRecipientOwnerPubkey != null &&
           normalizedRecipientOwnerPubkey == normalizedRemoteDeviceId;
-      var shouldImportSessionState = !isOwnerDeviceResponse;
-      if (!shouldImportSessionState) {
+      var shouldImportSessionState = true;
+      if (isOwnerDeviceResponse) {
         final activeSessionState = await sessionManager.getActiveSessionState(
           recipientOwnerPubkey,
         );
         shouldImportSessionState =
             activeSessionState == null ||
             activeSessionState.isEmpty ||
+            activeSessionState != sessionState ||
             !_sessionStateHasReceivingCapability(activeSessionState);
       }
 

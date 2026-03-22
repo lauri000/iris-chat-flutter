@@ -5,6 +5,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'logger_service.dart';
 
+void _debugNdrLog(String message) {}
+
 typedef NostrChannelConnector = Future<WebSocketChannel> Function(Uri uri);
 
 /// Service for communicating with Nostr relays.
@@ -166,6 +168,11 @@ class NostrService {
               eventData,
               subscriptionId: subscriptionId,
             );
+            if (event.kind == 1060) {
+              _debugNdrLog(
+                'relay EVENT 1060 id=${event.id} pubkey=${event.pubkey} subid=$subscriptionId',
+              );
+            }
 
             _eventController.add(event);
           }

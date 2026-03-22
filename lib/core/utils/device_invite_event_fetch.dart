@@ -10,6 +10,7 @@ Future<List<NostrEvent>> fetchLatestDeviceInviteEvents(
   NostrService nostrService, {
   required Iterable<String> devicePubkeysHex,
   Duration timeout = const Duration(seconds: 2),
+  Duration? connectionTimeout,
   String subscriptionLabel = 'device-invite-fetch',
 }) async {
   final orderedPubkeys = <String>[];
@@ -28,7 +29,10 @@ Future<List<NostrEvent>> fetchLatestDeviceInviteEvents(
   final bestByAuthor = <String, NostrEvent>{};
   var completed = false;
   Timer? settleTimer;
+  Timer? connectionTimer;
+  final connectionWaitTimeout = connectionTimeout ?? timeout;
   late final StreamSubscription<NostrEvent> sub;
+  StreamSubscription<RelayConnectionEvent>? connectionSub;
 
   Future<List<NostrEvent>> finish() async {
     if (completed) {
@@ -40,7 +44,9 @@ Future<List<NostrEvent>> fetchLatestDeviceInviteEvents(
 
     completed = true;
     settleTimer?.cancel();
+    connectionTimer?.cancel();
     await sub.cancel();
+    await connectionSub?.cancel();
     nostrService.closeSubscription(subid);
     return orderedPubkeys
         .map((pubkey) => bestByAuthor[pubkey])
@@ -49,6 +55,13 @@ Future<List<NostrEvent>> fetchLatestDeviceInviteEvents(
   }
 
   final completer = Completer<List<NostrEvent>>();
+  void startResponseTimeout() {
+    connectionTimer?.cancel();
+    connectionTimer = Timer(connectionWaitTimeout, () async {
+      if (completer.isCompleted) return;
+      completer.complete(await finish());
+    });
+  }
   void scheduleFinish() {
     if (completed) return;
     settleTimer?.cancel();
@@ -85,10 +98,20 @@ Future<List<NostrEvent>> fetchLatestDeviceInviteEvents(
     ),
   );
 
-  Timer(timeout, () async {
-    if (completer.isCompleted) return;
-    completer.complete(await finish());
-  });
+  if (nostrService.connectedCount > 0) {
+    startResponseTimeout();
+  } else {
+    connectionSub = nostrService.connectionEvents.listen((event) {
+      if (completed || event.status != RelayStatus.connected) return;
+      connectionSub?.cancel();
+      connectionSub = null;
+      startResponseTimeout();
+    });
+    connectionTimer = Timer(timeout, () async {
+      if (completer.isCompleted) return;
+      completer.complete(await finish());
+    });
+  }
 
   return completer.future;
 }

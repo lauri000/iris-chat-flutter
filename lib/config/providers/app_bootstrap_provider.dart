@@ -5,6 +5,7 @@ import 'auth_provider.dart';
 import 'chat_provider.dart';
 import 'invite_provider.dart';
 import 'nostr_provider.dart';
+import '../../core/services/logger_service.dart';
 
 List<String> sessionBootstrapTargets({
   required Iterable<String> sessionRecipientPubkeysHex,
@@ -169,15 +170,40 @@ class AppBootstrapNotifier extends StateNotifier<AppBootstrapState> {
       if (!mounted || runId != _runId) return;
 
       try {
+        ref.read(messageSubscriptionProvider);
+      } catch (error, stackTrace) {
+        Logger.warning(
+          'Failed to start message subscription during app bootstrap',
+          category: LogCategory.app,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+
+      try {
         await bootstrapCurrentSessions();
-      } catch (_) {}
+      } catch (error, stackTrace) {
+        Logger.warning(
+          'Failed to bootstrap current sessions during app bootstrap',
+          category: LogCategory.session,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
 
       await ref.read(inviteStateProvider.notifier).loadInvites();
       try {
         await ref
             .read(inviteStateProvider.notifier)
             .bootstrapInviteResponsesFromRelay();
-      } catch (_) {}
+      } catch (error, stackTrace) {
+        Logger.warning(
+          'Failed to bootstrap invite responses from relay during app bootstrap',
+          category: LogCategory.invite,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
       try {
         await ref.read(sessionStateProvider.notifier).loadSessions();
         await bootstrapCurrentSessions();
@@ -198,19 +224,40 @@ class AppBootstrapNotifier extends StateNotifier<AppBootstrapState> {
         await sessionManager.repairRecentlyActiveLinkedDeviceRecords(
           bootstrapTargets,
         );
-      } catch (_) {}
-      try {
-        ref.read(messageSubscriptionProvider);
-      } catch (_) {}
+        await sessionManager.bootstrapRecentMessageEventsFromRelay(
+          bootstrapTargets,
+        );
+      } catch (error, stackTrace) {
+        Logger.warning(
+          'Failed to refresh or repair message subscriptions during app bootstrap',
+          category: LogCategory.session,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
 
       try {
         await ref
             .read(inviteStateProvider.notifier)
             .ensurePublishedPublicInvite();
-      } catch (_) {}
+      } catch (error, stackTrace) {
+        Logger.warning(
+          'Failed to ensure public invite during app bootstrap',
+          category: LogCategory.invite,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
       try {
         await bootstrapOwnPublicSelfSession();
-      } catch (_) {}
+      } catch (error, stackTrace) {
+        Logger.warning(
+          'Failed to bootstrap owner self session during app bootstrap',
+          category: LogCategory.session,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
 
       if (!mounted || runId != _runId) return;
       state = state.copyWith(isLoading: false, isReady: true, clearError: true);
@@ -235,10 +282,12 @@ class AppBootstrapNotifier extends StateNotifier<AppBootstrapState> {
 final appBootstrapProvider =
     StateNotifierProvider<AppBootstrapNotifier, AppBootstrapState>((ref) {
       final notifier = AppBootstrapNotifier(ref);
+      // Keep the DM receive path mounted for the lifetime of app bootstrap.
+      // A one-off `read` is not enough when auth/session dependencies invalidate;
+      // Riverpod can dispose the provider and its relay/message listeners.
+      ref.listen(messageSubscriptionProvider, (previous, next) {});
+
       void handleAuthState(AuthState authState) {
-        if (authState.isInitialized && authState.isAuthenticated) {
-          ref.read(messageSubscriptionProvider);
-        }
         notifier.onAuthStateChanged(authState);
       }
 

@@ -8,8 +8,11 @@ import '../../features/auth/domain/repositories/auth_repository.dart';
 import '../ffi/ndr_ffi.dart';
 import '../utils/app_keys_event_fetch.dart';
 import '../utils/device_invite_event_fetch.dart';
+import '../utils/message_event_backfill.dart';
 import 'logger_service.dart';
 import 'nostr_service.dart';
+
+void _debugNdrLog(String message) {}
 
 class DecryptedMessage {
   const DecryptedMessage({
@@ -238,6 +241,47 @@ List<Map<String, dynamic>> _deviceSessionMaps(Map<String, dynamic> device) {
   return sessionMaps;
 }
 
+Set<String> storedActiveSessionSenderPubkeys(String userRecordJson) {
+  try {
+    final decoded = jsonDecode(userRecordJson);
+    if (decoded is! Map<String, dynamic>) return const <String>{};
+
+    final devices = decoded['devices'];
+    if (devices is! List) return const <String>{};
+
+    final senderPubkeys = <String>{};
+    for (final rawDevice in devices) {
+      if (rawDevice is! Map) continue;
+      final device = Map<String, dynamic>.from(rawDevice);
+      final active = device['active_session'] ?? device['activeSession'];
+      if (active is! Map) continue;
+
+      final sessionMap = Map<String, dynamic>.from(active);
+      final current = _jsonStringValue(
+        sessionMap,
+        'their_current_nostr_public_key',
+        'theirCurrentNostrPublicKey',
+      )?.trim().toLowerCase();
+      final next = _jsonStringValue(
+        sessionMap,
+        'their_next_nostr_public_key',
+        'theirNextNostrPublicKey',
+      )?.trim().toLowerCase();
+
+      if (current != null && current.isNotEmpty) {
+        senderPubkeys.add(current);
+      }
+      if (next != null && next.isNotEmpty) {
+        senderPubkeys.add(next);
+      }
+    }
+
+    return senderPubkeys;
+  } catch (_) {
+    return const <String>{};
+  }
+}
+
 List<String> storedKnownDeviceIdsMissingRecords(String userRecordJson) {
   try {
     final decoded = jsonDecode(userRecordJson);
@@ -445,10 +489,15 @@ class SessionManagerService {
   static const String _groupOuterSubId = 'ndr-group-outer';
   static const Duration _groupOuterBackfillDuration = Duration(seconds: 2);
   static const int _groupOuterBackfillSinceSeconds = 3600;
+  static const Duration _directMessageBackfillDuration = Duration(seconds: 2);
+  static const int _directMessageBackfillSinceSeconds = 120;
   static const String _processedMessageEventIdsFileName =
       'processed_message_event_ids.json';
   static const int _kMaxProcessedMessageEventIds = 4000;
   List<String> _groupOuterSenderEventPubkeys = const [];
+  final Map<String, List<String>> _directMessageAuthorsBySubid =
+      <String, List<String>>{};
+  final Map<String, int> _directMessageAuthorRefCounts = <String, int>{};
   static Future<void> _storageCriticalQueue = Future.value();
   String? _processedMessageEventIdsPath;
   Future<void> _processedIdsPersistQueue = Future.value();
@@ -518,6 +567,8 @@ class SessionManagerService {
     _eventSubscription = null;
     _nostrService.closeSubscription(_groupOuterSubId);
     _groupOuterSenderEventPubkeys = const [];
+    _directMessageAuthorsBySubid.clear();
+    _directMessageAuthorRefCounts.clear();
     for (final timer in _relayBackfillTimersByOwner.values) {
       timer.cancel();
     }
@@ -593,6 +644,7 @@ class SessionManagerService {
         _nostrService,
         ownerPubkeyHex: ownerPubkeyHex,
         timeout: const Duration(seconds: 1),
+        connectionTimeout: const Duration(seconds: 15),
         subscriptionLabel: 'appkeys-bootstrap',
       );
       final devicePubkeys = <String>{ownerPubkeyHex};
@@ -618,6 +670,7 @@ class SessionManagerService {
         _nostrService,
         devicePubkeysHex: devicePubkeys,
         timeout: const Duration(seconds: 1),
+        connectionTimeout: const Duration(seconds: 15),
         subscriptionLabel: 'device-invite-bootstrap',
       );
       for (final inviteEvent in latestInvites) {
@@ -673,6 +726,81 @@ class SessionManagerService {
             });
           }
         }
+      }
+      await _drainEventsUnlocked();
+    });
+  }
+
+  Future<void> bootstrapRecentMessageEventsFromRelay(
+    Iterable<String> peerOwnerPubkeysHex, {
+    Duration timeout = const Duration(seconds: 2),
+    Duration window = const Duration(hours: 24),
+  }) async {
+    final orderedOwners = <String>[];
+    final seenOwners = <String>{};
+    for (final raw in peerOwnerPubkeysHex) {
+      final normalized = raw.trim().toLowerCase();
+      if (normalized.isEmpty || !seenOwners.add(normalized)) continue;
+      orderedOwners.add(normalized);
+    }
+    if (orderedOwners.isEmpty) return;
+    _debugNdrLog(
+      'bootstrapRecentMessageEventsFromRelay owners=${orderedOwners.join(",")}',
+    );
+
+    final storagePath = await _resolveStoragePath();
+    final senderPubkeys = <String>{};
+    for (final peerOwnerPubkeyHex in orderedOwners) {
+      final userRecordFile = File(
+        '$storagePath/user_${peerOwnerPubkeyHex.trim().toLowerCase()}.json',
+      );
+      if (!userRecordFile.existsSync()) continue;
+      senderPubkeys.addAll(
+        storedActiveSessionSenderPubkeys(userRecordFile.readAsStringSync()),
+      );
+    }
+    if (senderPubkeys.isEmpty) {
+      _debugNdrLog('bootstrapRecentMessageEventsFromRelay no sender pubkeys');
+      return;
+    }
+    _debugNdrLog(
+      'bootstrapRecentMessageEventsFromRelay senderPubkeys=${senderPubkeys.toList()..sort()}',
+    );
+
+    final sinceSeconds =
+        DateTime.now().subtract(window).millisecondsSinceEpoch ~/ 1000;
+    final events = await fetchRecentMessageEvents(
+      _nostrService,
+      senderPubkeysHex: senderPubkeys,
+      sinceSeconds: sinceSeconds,
+      timeout: timeout,
+      connectionTimeout: const Duration(seconds: 15),
+      subscriptionLabel: 'message-bootstrap',
+    );
+    _debugNdrLog(
+      'bootstrapRecentMessageEventsFromRelay fetched=${events.length}',
+    );
+    if (events.isEmpty) return;
+
+    Logger.info(
+      'Bootstrapping recent encrypted messages from relay',
+      category: LogCategory.session,
+      data: {
+        'ownerCount': orderedOwners.length,
+        'senderPubkeyCount': senderPubkeys.length,
+        'eventCount': events.length,
+      },
+    );
+
+    await _runExclusiveIgnoringDisposed(() async {
+      final manager = _manager;
+      if (manager == null) {
+        throw const NostrException('Session manager not initialized');
+      }
+
+      for (final event in events) {
+        if (_processedMessageEventIds.containsKey(event.id)) continue;
+        await manager.processEvent(jsonEncode(event.toJson()));
       }
       await _drainEventsUnlocked();
     });
@@ -1320,6 +1448,11 @@ class SessionManagerService {
   }
 
   Future<void> _handleEvent(NostrEvent event) async {
+    if (event.kind == 1060) {
+      _debugNdrLog(
+        '_handleEvent 1060 id=${event.id} pubkey=${event.pubkey} subid=${event.subscriptionId ?? ""}',
+      );
+    }
     _pushDebugEntry(_debugRecentRelayEvents, {
       'id': event.id,
       'kind': event.kind,
@@ -1372,7 +1505,12 @@ class SessionManagerService {
     }
 
     final manager = _manager;
-    if (manager == null) return;
+    if (manager == null) {
+      if (event.kind == 1060) {
+        _debugNdrLog('_handleEvent 1060 manager not initialized');
+      }
+      return;
+    }
     final eventJson = jsonEncode(event.toJson());
     await manager.processEvent(eventJson);
     if (event.kind == 1060) {
@@ -1480,6 +1618,98 @@ class SessionManagerService {
     });
 
     Timer(_groupOuterBackfillDuration, () {
+      if (_isDisposed) return;
+      _nostrService.closeSubscription(subscriptionId);
+    });
+  }
+
+  void _registerDirectMessageSubscription(PubSubEvent event) {
+    final subid = event.subid?.trim();
+    if (subid == null || subid.isEmpty) return;
+
+    final previousAuthors = _directMessageAuthorsBySubid.remove(subid);
+    if (previousAuthors != null) {
+      for (final author in previousAuthors) {
+        final nextCount = (_directMessageAuthorRefCounts[author] ?? 1) - 1;
+        if (nextCount <= 0) {
+          _directMessageAuthorRefCounts.remove(author);
+        } else {
+          _directMessageAuthorRefCounts[author] = nextCount;
+        }
+      }
+    }
+
+    final addedAuthors = directMessageSubscriptionBackfillAuthors(
+      event: event,
+      existingAuthorRefCounts: _directMessageAuthorRefCounts,
+    );
+
+    final filterJson = event.filterJson;
+    if (filterJson == null) return;
+
+    try {
+      final decoded = jsonDecode(filterJson);
+      if (decoded is! Map<String, dynamic>) return;
+      final authors = decoded['authors'];
+      if (authors is! List) return;
+
+      final normalizedAuthors = <String>[];
+      final seenAuthors = <String>{};
+      for (final author in authors) {
+        final normalized = author?.toString().trim().toLowerCase();
+        if (normalized == null || normalized.length != 64) continue;
+        if (!RegExp(r'^[0-9a-f]+$').hasMatch(normalized)) continue;
+        if (!seenAuthors.add(normalized)) continue;
+        normalizedAuthors.add(normalized);
+        _directMessageAuthorRefCounts[normalized] =
+            (_directMessageAuthorRefCounts[normalized] ?? 0) + 1;
+      }
+
+      if (normalizedAuthors.isEmpty) return;
+      _directMessageAuthorsBySubid[subid] = normalizedAuthors;
+
+      if (addedAuthors.isNotEmpty) {
+        _debugNdrLog(
+          'direct message subscribe backfill authors=${addedAuthors.join(",")} subid=$subid',
+        );
+        _backfillRecentDirectMessageEvents(addedAuthors);
+      }
+    } catch (_) {}
+  }
+
+  void _unregisterDirectMessageSubscription(String subid) {
+    final normalizedSubid = subid.trim();
+    if (normalizedSubid.isEmpty) return;
+
+    final authors = _directMessageAuthorsBySubid.remove(normalizedSubid);
+    if (authors == null) return;
+
+    for (final author in authors) {
+      final nextCount = (_directMessageAuthorRefCounts[author] ?? 1) - 1;
+      if (nextCount <= 0) {
+        _directMessageAuthorRefCounts.remove(author);
+      } else {
+        _directMessageAuthorRefCounts[author] = nextCount;
+      }
+    }
+  }
+
+  void _backfillRecentDirectMessageEvents(List<String> senderEventPubkeys) {
+    if (_isDisposed || senderEventPubkeys.isEmpty) return;
+
+    final sinceSeconds =
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 -
+        _directMessageBackfillSinceSeconds;
+    final subscriptionId =
+        'direct-message-backfill-${DateTime.now().microsecondsSinceEpoch}';
+
+    _nostrService.subscribeWithIdRaw(subscriptionId, <String, dynamic>{
+      'kinds': const [1060],
+      'authors': senderEventPubkeys,
+      'since': sinceSeconds > 0 ? sinceSeconds : 0,
+    });
+
+    Timer(_directMessageBackfillDuration, () {
       if (_isDisposed) return;
       _nostrService.closeSubscription(subscriptionId);
     });
@@ -1594,15 +1824,20 @@ class SessionManagerService {
               jsonDecode(event.filterJson!) as Map<String, dynamic>;
           // Preserve unknown tag filters like `#d` and `#l`.
           _nostrService.subscribeWithIdRaw(event.subid!, filterMap);
+          _registerDirectMessageSubscription(event);
         }
         break;
       case 'unsubscribe':
         if (event.subid != null) {
+          _unregisterDirectMessageSubscription(event.subid!);
           _nostrService.closeSubscription(event.subid!);
         }
         break;
       case 'decrypted_message':
         if (event.senderPubkeyHex != null && event.content != null) {
+          _debugNdrLog(
+            'decrypted_message sender=${event.senderPubkeyHex} eventId=${event.eventId ?? ""}',
+          );
           final createdAt = event.eventId != null
               ? _eventTimestamps[event.eventId!]
               : null;

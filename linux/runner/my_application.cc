@@ -10,13 +10,56 @@
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  gboolean start_minimized;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
+namespace {
+
+constexpr char kStartupLaunchArg[] = "--launch-at-startup";
+
+gboolean has_startup_launch_arg(gchar** arguments) {
+  if (arguments == nullptr) {
+    return FALSE;
+  }
+
+  for (gchar** argument = arguments; *argument != nullptr; ++argument) {
+    if (g_strcmp0(*argument, kStartupLaunchArg) == 0) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+char** copy_dart_entrypoint_arguments(gchar** arguments) {
+  if (arguments == nullptr) {
+    return nullptr;
+  }
+
+  GPtrArray* filtered_arguments = g_ptr_array_new_with_free_func(g_free);
+  for (gchar** argument = arguments; *argument != nullptr; ++argument) {
+    if (g_strcmp0(*argument, kStartupLaunchArg) != 0) {
+      g_ptr_array_add(filtered_arguments, g_strdup(*argument));
+    }
+  }
+  g_ptr_array_add(filtered_arguments, nullptr);
+
+  return static_cast<char**>(g_ptr_array_free(filtered_arguments, FALSE));
+}
+
+}  // namespace
+
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
-  gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+  GtkWindow* window =
+      GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+  gtk_widget_show(GTK_WIDGET(window));
+
+  if (self->start_minimized) {
+    gtk_window_iconify(window);
+  }
 }
 
 // Implements GApplication::activate.
@@ -84,7 +127,9 @@ static gboolean my_application_local_command_line(GApplication* application,
                                                   int* exit_status) {
   MyApplication* self = MY_APPLICATION(application);
   // Strip out the first argument as it is the binary name.
-  self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
+  self->start_minimized = has_startup_launch_arg(*arguments + 1);
+  self->dart_entrypoint_arguments =
+      copy_dart_entrypoint_arguments(*arguments + 1);
 
   g_autoptr(GError) error = nullptr;
   if (!g_application_register(application, nullptr, &error)) {
@@ -133,7 +178,9 @@ static void my_application_class_init(MyApplicationClass* klass) {
   G_OBJECT_CLASS(klass)->dispose = my_application_dispose;
 }
 
-static void my_application_init(MyApplication* self) {}
+static void my_application_init(MyApplication* self) {
+  self->start_minimized = FALSE;
+}
 
 MyApplication* my_application_new() {
   // Set the program name to the application ID, which helps various systems

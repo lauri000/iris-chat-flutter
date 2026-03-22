@@ -2,8 +2,27 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include <algorithm>
+
 #include "flutter_window.h"
 #include "utils.h"
+
+namespace {
+
+constexpr char kStartupLaunchArg[] = "--launch-at-startup";
+
+bool HasStartupLaunchArg(const std::vector<std::string>& arguments) {
+  return std::find(arguments.begin(), arguments.end(), kStartupLaunchArg) !=
+         arguments.end();
+}
+
+void RemoveStartupLaunchArg(std::vector<std::string>* arguments) {
+  arguments->erase(
+      std::remove(arguments->begin(), arguments->end(), kStartupLaunchArg),
+      arguments->end());
+}
+
+}  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
@@ -21,10 +40,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
+  const bool start_minimized = HasStartupLaunchArg(command_line_arguments);
+  RemoveStartupLaunchArg(&command_line_arguments);
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
-  FlutterWindow window(project);
+  FlutterWindow window(project, start_minimized);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
   if (!window.Create(L"iris_chat", origin, size)) {

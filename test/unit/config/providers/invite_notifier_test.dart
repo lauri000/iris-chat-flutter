@@ -441,7 +441,7 @@ void main() {
 
     group('handleInviteResponse', () {
       test(
-        'does not import replayed owner-device state when an active native session already exists',
+        'does not import identical owner-device state when an active native session already exists',
         () async {
           const channel = MethodChannel('to.iris.chat/ndr_ffi');
           const inviteId = 'invite-1';
@@ -476,7 +476,7 @@ void main() {
                       'ownerPubkeyHex': ownerPubkeyHex,
                     };
                   case 'sessionStateJson':
-                    return '{"session":"replayed"}';
+                    return '{"receiving_chain_key":"active-receive"}';
                   case 'sessionDispose':
                   case 'inviteDispose':
                     return null;
@@ -543,6 +543,120 @@ void main() {
           );
           verify(
             () => mockDatasource.markUsed(inviteId, ownerPubkeyHex),
+          ).called(1);
+          verify(
+            () => mockSessionManagerService.refreshSubscription(),
+          ).called(1);
+        },
+      );
+
+      test(
+        'imports differing owner-device response state even when an active native session can receive',
+        () async {
+          const channel = MethodChannel('to.iris.chat/ndr_ffi');
+          const inviteId = 'invite-1b';
+          const inviteSerializedState = '{"invite":"serialized"}';
+          const ownerPubkeyHex =
+              '1111111111111111111111111111111111111111111111111111111111111111';
+          const devicePubkeyHex =
+              '2222222222222222222222222222222222222222222222222222222222222222';
+          const devicePrivkeyHex =
+              '3333333333333333333333333333333333333333333333333333333333333333';
+          final invite = Invite(
+            id: inviteId,
+            inviterPubkeyHex: ownerPubkeyHex,
+            createdAt: DateTime(2026, 1, 1),
+            serializedState: inviteSerializedState,
+          );
+          final existingSession = ChatSession(
+            id: ownerPubkeyHex,
+            recipientPubkeyHex: ownerPubkeyHex,
+            createdAt: DateTime(2026, 1, 1),
+          );
+
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, (call) async {
+                switch (call.method) {
+                  case 'inviteDeserialize':
+                    return <String, dynamic>{'id': 'mock-invite-handle'};
+                  case 'inviteProcessResponse':
+                    return <String, dynamic>{
+                      'session': <String, dynamic>{'id': 'mock-session-handle'},
+                      'inviteePubkeyHex': ownerPubkeyHex,
+                      'ownerPubkeyHex': ownerPubkeyHex,
+                    };
+                  case 'sessionStateJson':
+                    return '{"their_next_nostr_public_key":"fresh-next"}';
+                  case 'sessionDispose':
+                  case 'inviteDispose':
+                    return null;
+                }
+                return null;
+              });
+
+          when(
+            () => mockDatasource.getInvite(inviteId),
+          ).thenAnswer((_) async => invite);
+          when(
+            () => mockDatasource.markUsed(inviteId, ownerPubkeyHex),
+          ).thenAnswer((_) async {});
+
+          when(() => mockRef.read(authStateProvider)).thenReturn(
+            const AuthState(
+              isAuthenticated: true,
+              isInitialized: true,
+              hasOwnerKey: true,
+              pubkeyHex: ownerPubkeyHex,
+              devicePubkeyHex: devicePubkeyHex,
+            ),
+          );
+          when(
+            () => mockRef.read(authRepositoryProvider),
+          ).thenReturn(mockAuthRepository);
+          when(
+            () => mockAuthRepository.getPrivateKey(),
+          ).thenAnswer((_) async => devicePrivkeyHex);
+          when(
+            () => mockRef.read(sessionManagerServiceProvider),
+          ).thenReturn(mockSessionManagerService);
+          when(
+            () =>
+                mockSessionManagerService.getActiveSessionState(ownerPubkeyHex),
+          ).thenAnswer((_) async => '{"receiving_chain_key":"active-receive"}');
+          when(
+            () => mockSessionManagerService.importSessionState(
+              peerPubkeyHex: any(named: 'peerPubkeyHex'),
+              stateJson: any(named: 'stateJson'),
+              deviceId: any(named: 'deviceId'),
+            ),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockSessionManagerService.refreshSubscription(),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockRef.read(sessionDatasourceProvider),
+          ).thenReturn(mockSessionDatasource);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(ownerPubkeyHex),
+          ).thenAnswer((_) async => existingSession);
+
+          try {
+            await notifier.handleInviteResponse(inviteId, '{"kind":1059}');
+          } finally {
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+                .setMockMethodCallHandler(channel, null);
+          }
+
+          verify(
+            () =>
+                mockSessionManagerService.getActiveSessionState(ownerPubkeyHex),
+          ).called(1);
+          verify(
+            () => mockSessionManagerService.importSessionState(
+              peerPubkeyHex: ownerPubkeyHex,
+              stateJson: '{"their_next_nostr_public_key":"fresh-next"}',
+              deviceId: ownerPubkeyHex,
+            ),
           ).called(1);
           verify(
             () => mockSessionManagerService.refreshSubscription(),

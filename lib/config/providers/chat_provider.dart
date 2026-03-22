@@ -36,6 +36,8 @@ part 'chat_provider_session_notifier.dart';
 part 'chat_provider_chat_notifier.dart';
 part 'chat_provider_group_notifier.dart';
 
+void _debugChatLog(String message) {}
+
 /// State for chat sessions.
 @freezed
 abstract class SessionState with _$SessionState {

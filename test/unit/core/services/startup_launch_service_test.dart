@@ -20,13 +20,23 @@ class FakeLaunchAtStartupAdapter extends LaunchAtStartupAdapter {
   int setupCalls = 0;
   int enableCalls = 0;
   int disableCalls = 0;
+  String? lastAppName;
+  String? lastAppPath;
+  List<String> lastArgs = const [];
 
   @override
   bool get isSupportedPlatform => supported;
 
   @override
-  void setup({required String appName, required String appPath}) {
+  void setup({
+    required String appName,
+    required String appPath,
+    List<String> args = const [],
+  }) {
     setupCalls += 1;
+    lastAppName = appName;
+    lastAppPath = appPath;
+    lastArgs = args;
   }
 
   @override
@@ -70,6 +80,9 @@ void main() {
       expect(snapshot.enabled, isTrue);
       expect(adapter.setupCalls, 1);
       expect(adapter.enableCalls, 1);
+      expect(adapter.lastAppName, 'iris chat');
+      expect(adapter.lastAppPath, isNotEmpty);
+      expect(adapter.lastArgs, const ['--launch-at-startup']);
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getBool('settings.launch_on_startup'), isTrue);
     });

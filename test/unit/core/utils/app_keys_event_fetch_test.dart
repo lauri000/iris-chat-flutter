@@ -14,6 +14,8 @@ void main() {
 
   late MockNostrService mockNostrService;
   late StreamController<NostrEvent> controller;
+  late StreamController<RelayConnectionEvent> connectionController;
+  late int connectedCount;
   late List<String> resolvedEventJsons;
   const channel = MethodChannel('to.iris.chat/ndr_ffi');
 
@@ -24,9 +26,15 @@ void main() {
   setUp(() {
     mockNostrService = MockNostrService();
     controller = StreamController<NostrEvent>.broadcast();
+    connectionController = StreamController<RelayConnectionEvent>.broadcast();
+    connectedCount = 1;
     resolvedEventJsons = <String>[];
 
     when(() => mockNostrService.events).thenAnswer((_) => controller.stream);
+    when(
+      () => mockNostrService.connectionEvents,
+    ).thenAnswer((_) => connectionController.stream);
+    when(() => mockNostrService.connectedCount).thenAnswer((_) => connectedCount);
     when(() => mockNostrService.closeSubscription(any())).thenAnswer((_) {});
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -61,6 +69,7 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     await controller.close();
+    await connectionController.close();
   });
 
   test('fetchAppKeysEvents collects matching AppKeys events only', () async {
@@ -179,6 +188,48 @@ void main() {
       (jsonDecode(resolvedEventJsons.last) as Map<String, dynamic>)['id'],
       'second-event',
     );
+  });
+
+  test('waits for first relay connection before timing out app keys fetch', () async {
+    when(() => mockNostrService.subscribeWithId(any(), any())).thenAnswer((
+      invocation,
+    ) {
+      final subid = invocation.positionalArguments[0] as String;
+
+      Future<void>.delayed(const Duration(milliseconds: 30), () {
+        connectedCount = 1;
+        connectionController.add(
+          const RelayConnectionEvent(
+            url: 'wss://relay.example',
+            status: RelayStatus.connected,
+          ),
+        );
+      });
+      Future<void>.delayed(const Duration(milliseconds: 50), () {
+        controller.add(
+          _appKeysEvent(
+            id: 'delayed-appkeys',
+            pubkey:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            createdAt: 1700000003,
+            subscriptionId: subid,
+          ),
+        );
+      });
+
+      return subid;
+    });
+
+    connectedCount = 0;
+    final events = await fetchAppKeysEvents(
+      mockNostrService,
+      ownerPubkeyHex:
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      timeout: const Duration(milliseconds: 40),
+      subscriptionLabel: 'test-appkeys',
+    );
+
+    expect(events.map((event) => event.id), ['delayed-appkeys']);
   });
 }
 

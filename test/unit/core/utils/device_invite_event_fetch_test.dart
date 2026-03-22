@@ -10,6 +10,8 @@ class MockNostrService extends Mock implements NostrService {}
 void main() {
   late MockNostrService mockNostrService;
   late StreamController<NostrEvent> controller;
+  late StreamController<RelayConnectionEvent> connectionController;
+  late int connectedCount;
 
   setUpAll(() {
     registerFallbackValue(const NostrFilter());
@@ -18,13 +20,20 @@ void main() {
   setUp(() {
     mockNostrService = MockNostrService();
     controller = StreamController<NostrEvent>.broadcast();
+    connectionController = StreamController<RelayConnectionEvent>.broadcast();
+    connectedCount = 1;
 
     when(() => mockNostrService.events).thenAnswer((_) => controller.stream);
+    when(
+      () => mockNostrService.connectionEvents,
+    ).thenAnswer((_) => connectionController.stream);
+    when(() => mockNostrService.connectedCount).thenAnswer((_) => connectedCount);
     when(() => mockNostrService.closeSubscription(any())).thenAnswer((_) {});
   });
 
   tearDown(() async {
     await controller.close();
+    await connectionController.close();
   });
 
   test('prefers the later-delivered invite when created_at ties', () async {
@@ -125,6 +134,50 @@ void main() {
 
     expect(invites, hasLength(1));
     expect(invites.single.id, 'correct-invite');
+  });
+
+  test('waits for first relay connection before timing out invite fetch', () async {
+    const wantedDevice =
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+    when(() => mockNostrService.subscribeWithId(any(), any())).thenAnswer((
+      invocation,
+    ) {
+      final subid = invocation.positionalArguments[0] as String;
+
+      Future<void>.delayed(const Duration(milliseconds: 30), () {
+        connectedCount = 1;
+        connectionController.add(
+          const RelayConnectionEvent(
+            url: 'wss://relay.example',
+            status: RelayStatus.connected,
+          ),
+        );
+      });
+      Future<void>.delayed(const Duration(milliseconds: 50), () {
+        controller.add(
+          _inviteEvent(
+            id: 'delayed-invite',
+            pubkey: wantedDevice,
+            createdAt: 1700000003,
+            subscriptionId: subid,
+          ),
+        );
+      });
+
+      return subid;
+    });
+
+    connectedCount = 0;
+    final invites = await fetchLatestDeviceInviteEvents(
+      mockNostrService,
+      devicePubkeysHex: const [wantedDevice],
+      timeout: const Duration(milliseconds: 40),
+      subscriptionLabel: 'test-invite',
+    );
+
+    expect(invites, hasLength(1));
+    expect(invites.single.id, 'delayed-invite');
   });
 }
 

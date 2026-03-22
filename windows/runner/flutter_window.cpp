@@ -4,8 +4,9 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
-FlutterWindow::FlutterWindow(const flutter::DartProject& project)
-    : project_(project) {}
+FlutterWindow::FlutterWindow(const flutter::DartProject& project,
+                             bool start_minimized)
+    : project_(project), start_minimized_(start_minimized) {}
 
 FlutterWindow::~FlutterWindow() {}
 
@@ -28,7 +29,7 @@ bool FlutterWindow::OnCreate() {
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+    this->Show(start_minimized_ ? SW_SHOWMINIMIZED : SW_SHOWNORMAL);
   });
 
   // Flutter can complete the first frame before the "show window" callback is
