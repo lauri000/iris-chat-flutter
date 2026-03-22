@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -21,12 +22,14 @@ const _androidChannel = AndroidNotificationChannel(
 
 final FlutterLocalNotificationsPlugin _mobilePushNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
+const MethodChannel _iosMobilePushChannel = MethodChannel('to.iris/mobile_push');
 final StreamController<MobilePushNotificationContent>
 _mobilePushReceivedNotificationsController =
     StreamController<MobilePushNotificationContent>.broadcast();
 bool _mobilePushNotificationsInitialized = false;
 bool _mobilePushBackgroundHandlerRegistered = false;
 bool _mobilePushForegroundMessageListenerRegistered = false;
+bool _mobilePushIosBridgeRegistered = false;
 
 Stream<MobilePushNotificationContent> get mobilePushReceivedNotifications =>
     _mobilePushReceivedNotificationsController.stream;
@@ -86,6 +89,7 @@ Future<void> initializeMobilePushRuntime() async {
   await _ensureFirebaseReady();
   await _ensureLocalNotificationsReady();
   _ensureForegroundMessageListenerRegistered();
+  await _ensureIosRemoteNotificationBridgeRegistered();
 
   if (Platform.isIOS) {
     try {
@@ -150,6 +154,48 @@ void _ensureForegroundMessageListenerRegistered() {
   });
 
   _mobilePushForegroundMessageListenerRegistered = true;
+}
+
+Future<void> _ensureIosRemoteNotificationBridgeRegistered() async {
+  if (kIsWeb || !Platform.isIOS || _mobilePushIosBridgeRegistered) return;
+
+  _iosMobilePushChannel.setMethodCallHandler((call) async {
+    if (call.method != 'remoteNotification') {
+      return;
+    }
+    _emitIosRemoteNotificationPayload(call.arguments);
+  });
+  _mobilePushIosBridgeRegistered = true;
+
+  try {
+    final pendingNotifications =
+        await _iosMobilePushChannel.invokeMethod<List<dynamic>>('setDartReady') ??
+        const <dynamic>[];
+    for (final notification in pendingNotifications) {
+      _emitIosRemoteNotificationPayload(notification);
+    }
+  } catch (error, stackTrace) {
+    Logger.warning(
+      'Failed to initialize iOS remote notification bridge',
+      category: LogCategory.message,
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+}
+
+void _emitIosRemoteNotificationPayload(Object? rawPayload) {
+  if (rawPayload is! Map) return;
+
+  final payload = <String, dynamic>{};
+  rawPayload.forEach((key, value) {
+    if (key == null) return;
+    payload[key.toString()] = value;
+  });
+
+  final content = MobilePushNotificationContent.fromData(payload);
+  if (content == null) return;
+  _mobilePushReceivedNotificationsController.add(content);
 }
 
 void _handleNotificationResponse(NotificationResponse response) {}
