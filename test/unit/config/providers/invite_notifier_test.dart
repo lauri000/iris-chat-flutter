@@ -772,5 +772,73 @@ void main() {
         },
       );
     });
+
+    group('acceptInviteFromUrl', () {
+      test(
+        'reuses an existing working session instead of accepting a duplicate chat invite',
+        () async {
+          const ownerPubkeyHex =
+              '1111111111111111111111111111111111111111111111111111111111111111';
+          final existingSession = ChatSession(
+            id: ownerPubkeyHex,
+            recipientPubkeyHex: ownerPubkeyHex,
+            createdAt: DateTime(2026, 1, 1),
+          );
+
+          when(() => mockRef.read(authStateProvider)).thenReturn(
+            const AuthState(
+              isAuthenticated: true,
+              isInitialized: true,
+              hasOwnerKey: true,
+              pubkeyHex:
+                  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              devicePubkeyHex:
+                  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            ),
+          );
+          when(
+            () => mockRef.read(sessionManagerServiceProvider),
+          ).thenReturn(mockSessionManagerService);
+          when(
+            () => mockRef.read(sessionDatasourceProvider),
+          ).thenReturn(mockSessionDatasource);
+          when(
+            () => mockSessionDatasource.getSessionByRecipient(ownerPubkeyHex),
+          ).thenAnswer((_) async => existingSession);
+          when(
+            () =>
+                mockSessionManagerService.getActiveSessionState(ownerPubkeyHex),
+          ).thenAnswer((_) async => '{"receiving_chain_key":"active-receive"}');
+          when(
+            () => mockSessionManagerService.setupUser(ownerPubkeyHex),
+          ).thenAnswer((_) async {});
+          when(
+            () => mockSessionManagerService.refreshSubscription(),
+          ).thenAnswer((_) async {});
+
+          final sessionId = await notifier.acceptInviteFromUrl(
+            'https://iris.to/#invite=%7B%22purpose%22%3A%22chat%22%2C%22owner%22%3A%22$ownerPubkeyHex%22%7D',
+          );
+
+          expect(sessionId, ownerPubkeyHex);
+          expect(notifier.state.isAccepting, isFalse);
+          verify(
+            () =>
+                mockSessionManagerService.getActiveSessionState(ownerPubkeyHex),
+          ).called(1);
+          verify(() => mockSessionManagerService.setupUser(ownerPubkeyHex))
+              .called(1);
+          verify(
+            () => mockSessionManagerService.refreshSubscription(),
+          ).called(1);
+          verifyNever(
+            () => mockSessionManagerService.acceptInviteFromUrl(
+              inviteUrl: any(named: 'inviteUrl'),
+              ownerPubkeyHintHex: any(named: 'ownerPubkeyHintHex'),
+            ),
+          );
+        },
+      );
+    });
   });
 }

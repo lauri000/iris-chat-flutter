@@ -369,7 +369,30 @@ class InviteNotifier extends StateNotifier<InviteState> {
       }
 
       final ownerHintPubkeyHex = extractInviteOwnerPubkeyHex(url);
+      final normalizedOwnerHintPubkeyHex = _normalizeDevicePubkeyHex(
+        ownerHintPubkeyHex ?? '',
+      );
       final sessionManager = _ref.read(sessionManagerServiceProvider);
+      if (normalizedOwnerHintPubkeyHex != null) {
+        final existingSession = await _ref
+            .read(sessionDatasourceProvider)
+            .getSessionByRecipient(normalizedOwnerHintPubkeyHex);
+        if (existingSession != null) {
+          final activeSessionState = await sessionManager.getActiveSessionState(
+            normalizedOwnerHintPubkeyHex,
+          );
+          final canReuseExistingSession =
+              activeSessionState != null &&
+              activeSessionState.isNotEmpty &&
+              _sessionStateHasReceivingCapability(activeSessionState);
+          if (canReuseExistingSession) {
+            await sessionManager.setupUser(normalizedOwnerHintPubkeyHex);
+            await sessionManager.refreshSubscription();
+            state = state.copyWith(isAccepting: false);
+            return existingSession.id;
+          }
+        }
+      }
       final acceptResult = await sessionManager.acceptInviteFromUrl(
         inviteUrl: url,
         ownerPubkeyHintHex: ownerHintPubkeyHex,
